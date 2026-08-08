@@ -1,0 +1,18 @@
+# Environment variables override every value in this file.
+MQ_HOST=localhost
+MQ_PORT=1414
+MQ_CHANNEL=DEV.APP.SVRCONN
+MQ_QUEUE_MANAGER=QM1
+MQ_QUEUE_NAME=AI.CUST.ENQ.TRIAGE.REQUEST.Q
+MQ_USER=app
+MQ_PASSWORD=replace-me
+DB_URL=jdbc:sqlserver://localhost:1433;databaseName=triage;encrypt=true;trustServerCertificate=true
+DB_USER=triage_app
+DB_PASSWORD=replace-me
+DB_POOL_SIZE=10
+AI_API_URL=http://localhost:8081/v1/classify
+AI_API_KEY=replace-me
+AI_TIMEOUT_SECONDS=15
+ROUTING_API_URL=http://localhost:8082/v1/escalations
+ROUTING_API_KEY=replace-me
+URGENCY_THRESHOLD=8
