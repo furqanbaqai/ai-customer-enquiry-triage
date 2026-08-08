@@ -2,7 +2,6 @@ package com.sib.triage;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
-import com.ibm.mq.jakarta.jms.MQConnectionFactory;
 import com.sib.triage.ai.AiHttpClassifier;
 import com.sib.triage.config.AppConfig;
 import com.sib.triage.messaging.MqEnquiryConsumer;
@@ -22,6 +21,7 @@ public final class TriageApplication {
     private TriageApplication() {}
 
     public static void main(String[] args) throws InterruptedException {
+        displayStartupBanner();
         var config = AppConfig.load();
         var executor = Executors.newVirtualThreadPerTaskExecutor();
         var mapper = new ObjectMapper().registerModule(new JavaTimeModule());
@@ -43,6 +43,20 @@ public final class TriageApplication {
         consumer.start();
         LOGGER.info("AI customer enquiry triage service is ready");
         new CountDownLatch(1).await();
+    }
+
+    private static void displayStartupBanner() {
+        System.out.print("""
+
+                AAA   IIIII  TTTTT  RRRR   IIIII   AAA    GGGG  EEEEE
+               A   A    I      T    R   R    I    A   A  G      E
+               AAAAA    I      T    RRRR     I    AAAAA  G  GG  EEEE
+               A   A    I      T    R  R     I    A   A  G   G  E
+               A   A  IIIII    T    R   R  IIIII  A   A   GGGG  EEEEE
+
+                         AI Customer Enquiry Triage
+
+                """);
     }
 
     private static HikariDataSource dataSource(AppConfig.Database config) {
