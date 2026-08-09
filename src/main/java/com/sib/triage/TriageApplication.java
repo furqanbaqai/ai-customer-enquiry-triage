@@ -47,15 +47,9 @@ public final class TriageApplication {
 
     private static void displayStartupBanner() {
         System.out.print("""
-
-                AAA   IIIII  TTTTT  RRRR   IIIII   AAA    GGGG  EEEEE
-               A   A    I      T    R   R    I    A   A  G      E
-               AAAAA    I      T    RRRR     I    AAAAA  G  GG  EEEE
-               A   A    I      T    R  R     I    A   A  G   G  E
-               A   A  IIIII    T    R   R  IIIII  A   A   GGGG  EEEEE
-
-                         AI Customer Enquiry Triage
-
+                ----------------------------------------------------------------
+                            CUSTOMER ENQUIRY TRIAGE SERVICE
+                ----------------------------------------------------------------
                 """);
     }
 

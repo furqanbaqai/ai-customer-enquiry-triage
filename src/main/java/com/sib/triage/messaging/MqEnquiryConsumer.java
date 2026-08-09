@@ -7,10 +7,14 @@ import com.sib.triage.service.TriagePipeline;
 import jakarta.jms.JMSConsumer;
 import jakarta.jms.JMSContext;
 import jakarta.jms.JMSException;
+import jakarta.jms.BytesMessage;
 import jakarta.jms.Message;
+import jakarta.jms.MessageFormatException;
 import jakarta.jms.TextMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import java.io.ByteArrayOutputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 
@@ -38,22 +42,52 @@ public final class MqEnquiryConsumer implements AutoCloseable {
     public void start() {
         consumer.setMessageListener(message -> {
             var correlationId = correlationId(message);
-            processingExecutor.submit(() -> dispatch(message, correlationId));
+            try {
+                // Copy the JMS body before the listener returns. A provider is not
+                // required to keep a delivered Message usable by another thread.
+                var payload = payload(message);
+                processingExecutor.submit(() -> dispatch(payload, correlationId));
+            } catch (JMSException e) {
+                LOGGER.error("Unable to read MQ message correlationId={}", correlationId, e);
+            }
         });
         context.start();
         LOGGER.info("IBM MQ consumer started");
     }
 
-    private void dispatch(Message message, String correlationId) {
+    private void dispatch(String payload, String correlationId) {
         try {
-            var payload = switch (message) {
-                case TextMessage text -> text.getText();
-                default -> message.getBody(String.class);
-            };
             pipeline.process(payload, correlationId);
         } catch (Exception e) {
             LOGGER.error("Unable to dispatch MQ message correlationId={}", correlationId, e);
         }
+    }
+
+    private static String payload(Message message) throws JMSException {
+        return switch (message) {
+            case TextMessage text -> text.getText();
+            case BytesMessage bytes -> readUtf8(bytes);
+            default -> {
+                if (message.isBodyAssignableTo(String.class)) yield message.getBody(String.class);
+                throw new MessageFormatException("Unsupported JMS message type: " + message.getClass().getName());
+            }
+        };
+    }
+
+    private static String readUtf8(BytesMessage message) throws JMSException {
+        message.reset();
+        var expectedLength = message.getBodyLength();
+        if (expectedLength > Integer.MAX_VALUE) {
+            throw new MessageFormatException("BytesMessage is too large to decode as JSON");
+        }
+
+        var output = new ByteArrayOutputStream((int) expectedLength);
+        var buffer = new byte[8192];
+        int bytesRead;
+        while ((bytesRead = message.readBytes(buffer)) != -1) {
+            if (bytesRead > 0) output.write(buffer, 0, bytesRead);
+        }
+        return output.toString(StandardCharsets.UTF_8);
     }
 
     private static String correlationId(Message message) {
