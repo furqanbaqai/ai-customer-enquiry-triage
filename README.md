@@ -7,7 +7,7 @@ A lightweight, Spring-free Java 21 service that:
 3. stores the enquiry and classification in Microsoft SQL Server; and
 4. sends urgent enquiries to a downstream routing REST API.
 
-Message processing, HTTP calls, and blocking database work are dispatched using Java virtual threads. AI calls are protected by Resilience4j retry and circuit-breaker policies.
+Message processing, HTTP calls, and blocking database work are dispatched using Java virtual threads.
 
 ## Prerequisites
 
@@ -130,7 +130,7 @@ The package phase includes all runtime dependencies in the application JAR. Run 
 java -jar target/ai-customer-enquiry-triage-1.0.0-SNAPSHOT.jar
 ```
 
-A successful startup logs both `IBM MQ consumer started` and `AI customer enquiry triage service is ready`. Stop the process with `Ctrl+C`; the shutdown hook closes MQ, HTTP retry scheduling, the database pool, and virtual-thread executor.
+A successful startup logs both `IBM MQ consumer started` and `AI customer enquiry triage service is ready`. Stop the process with `Ctrl+C`; the shutdown hook closes MQ, the database pool, and the virtual-thread executor.
 
 ## Message contracts
 
@@ -175,7 +175,7 @@ When the score is greater than or equal to `URGENCY_THRESHOLD`, the persisted re
 - **Missing required configuration:** the startup exception names the missing variable. Define it in the environment or local properties file.
 - **MQ initialization failure:** check the host, port, channel, queue manager, queue existence, credentials, and MQ authority records.
 - **SQL Server connection failure:** verify the JDBC URL, TLS options, database name, credentials, and network access.
-- **AI failures:** non-`2xx` responses and invalid JSON are treated as failures. The client retries up to three attempts before surfacing the error; repeated failures can open the circuit breaker.
+- **AI failures:** non-`2xx` responses and invalid JSON are treated as failures and surfaced immediately without application-level retries.
 - **No downstream notification:** confirm the returned urgency score meets `URGENCY_THRESHOLD` and inspect the routing endpoint response.
 - **Maven PKIX error:** update the JDK trust store or configure Maven to use the organization-approved certificate store; do not disable TLS verification in production.
 

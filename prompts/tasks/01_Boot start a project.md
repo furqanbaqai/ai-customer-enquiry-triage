@@ -10,7 +10,6 @@ Task: Update and extend the existing, locally checked-out repository `ai-custome
 * **Messaging:** Official IBM MQ Java Client (`com.ibm.mq:com.ibm.mq.jakarta.client`, Jakarta JMS 3.0+).
 * **Database & Pooling:** Microsoft SQL Server (`com.microsoft.sqlserver:mssql-jdbc`) with HikariCP connection pooling (`com.zaxxer:HikariCP`).
 * **HTTP Client:** Native `java.net.http.HttpClient` configured for async execution with Virtual Threads.
-* **Resilience:** Standalone Resilience4j (`resilience4j-retry`, `resilience4j-circuitbreaker`).
 * **Logging & Parsing:** SLF4J + Logback, Jackson for JSON serialization/deserialization.
 * **Framework Restriction:** Zero Spring Framework dependencies.
 
@@ -33,7 +32,7 @@ Task: Update and extend the existing, locally checked-out repository `ai-custome
 
 4. **Pipeline Execution Flow:**
    * **Ingest:** Consume customer enquiry payloads from `AI.CUST.ENQ.TRIAGE.REQUEST.Q`.
-   * **Parse & Triage:** Parse JSON into a strongly typed `CustomerEnquiry` Record. Call an upstream AI/LLM classification service via `HttpClient` (enclosed with Resilience4j retries and circuit breaking) to obtain intent, urgency score, sentiment, and team routing recommendations.
+   * **Parse & Triage:** Parse JSON into a strongly typed `CustomerEnquiry` Record. Call an upstream AI/LLM classification service via `HttpClient` to obtain intent, urgency score, sentiment, and team routing recommendations.
    * **Route:** Issue non-blocking downstream REST calls for high-urgency/escalated cases.
 
 5. **Code Style & Infrastructure Guidelines:**

@@ -4,10 +4,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sib.triage.config.AppConfig;
 import com.sib.triage.domain.CustomerEnquiry;
 import com.sib.triage.domain.TriageResult;
-import io.github.resilience4j.circuitbreaker.CircuitBreaker;
-import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
-import io.github.resilience4j.retry.Retry;
-import io.github.resilience4j.retry.RetryConfig;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
@@ -15,19 +11,15 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
-import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public final class AiHttpClassifier implements TriageClassifier, AutoCloseable {
+public final class AiHttpClassifier implements TriageClassifier {
     private static final Logger LOGGER = LoggerFactory.getLogger(AiHttpClassifier.class);
     private static final String PROMPT_CLASSPATH = "com/sib/triage/ai/prompts/TriagePipelinePromptv1";
     private static final String PROMPT_CLASSPATH_MD = PROMPT_CLASSPATH + ".md";
@@ -55,28 +47,15 @@ public final class AiHttpClassifier implements TriageClassifier, AutoCloseable {
     private final HttpClient client;
     private final ObjectMapper mapper;
     private final AppConfig.HttpEndpoint endpoint;
-    private final Retry retry;
-    private final CircuitBreaker circuitBreaker;
-    private final ScheduledExecutorService retryScheduler;
 
     public AiHttpClassifier(HttpClient client, ObjectMapper mapper, AppConfig.HttpEndpoint endpoint) {
         this.client = client; this.mapper = mapper; this.endpoint = endpoint;
-        this.retryScheduler = Executors.newSingleThreadScheduledExecutor(Thread.ofVirtual().name("ai-retry-", 0).factory());
-        this.retry = Retry.of("ai-classification", RetryConfig.custom()
-                .maxAttempts(3).waitDuration(Duration.ofMillis(300)).retryExceptions(AiServiceException.class).build());
-        this.circuitBreaker = CircuitBreaker.of("ai-classification", CircuitBreakerConfig.custom()
-                .failureRateThreshold(50).minimumNumberOfCalls(5).slidingWindowSize(10).waitDurationInOpenState(Duration.ofSeconds(30)).build());
     }
 
     @Override
     public CompletionStage<TriageResult> classify(CustomerEnquiry enquiry, String correlationId) {
-        Supplier<CompletionStage<TriageResult>> operation = () -> invoke(enquiry, correlationId);
-        var resilient = Retry.decorateCompletionStage(retry, retryScheduler,
-                CircuitBreaker.decorateCompletionStage(circuitBreaker, operation));
-        return resilient.get();
+        return invoke(enquiry, correlationId);
     }
-
-    @Override public void close() { retryScheduler.close(); }
 
     private CompletionStage<TriageResult> invoke(CustomerEnquiry enquiry, String correlationId) {
         try {

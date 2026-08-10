@@ -36,7 +36,6 @@ public final class TriageApplication {
         Runtime.getRuntime().addShutdownHook(Thread.ofPlatform().name("shutdown").unstarted(() -> {
             LOGGER.info("Shutting down triage service");
             consumer.close();
-            classifier.close();
             dataSource.close();
             executor.close();
         }));
