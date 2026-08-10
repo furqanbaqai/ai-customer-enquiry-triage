@@ -71,12 +71,6 @@ public final class AppConfig {
         return new HttpEndpoint(required("AI_API_URL"), required("AI_API_KEY"), durationSeconds("AI_TIMEOUT_SECONDS", 15));
     }
 
-    public HttpEndpoint routing() {
-        return new HttpEndpoint(required("ROUTING_API_URL"), value("ROUTING_API_KEY", ""), durationSeconds("ROUTING_TIMEOUT_SECONDS", 10));
-    }
-
-    public int urgencyThreshold() { return integer("URGENCY_THRESHOLD", 8); }
-
     public record Mq(String host, int port, String channel, String queueManager, String queueName,
                      String username, String password) {
         public Mq { Objects.requireNonNull(host); Objects.requireNonNull(queueName); }

@@ -13,6 +13,3 @@ DB_POOL_SIZE=10
 AI_API_URL=http://localhost:8081/v1/classify
 AI_API_KEY=replace-me
 AI_TIMEOUT_SECONDS=15
-ROUTING_API_URL=http://localhost:8082/v1/escalations
-ROUTING_API_KEY=replace-me
-URGENCY_THRESHOLD=8

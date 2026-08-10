@@ -11,6 +11,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -83,12 +84,38 @@ public final class AiHttpClassifier implements TriageClassifier {
             return client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).thenApply(response -> {
                 if (response.statusCode() < 200 || response.statusCode() >= 300)
                     throw new AiServiceException("AI service returned HTTP " + response.statusCode());
-                try { return mapper.readValue(response.body(), TriageResult.class); }
+                try { return parseResponse(response.body()); }
                 catch (Exception e) { throw new AiServiceException("Invalid AI response", e); }
             });
         } catch (Exception e) {
             return CompletableFuture.failedFuture(e instanceof AiServiceException ? e : new AiServiceException("Cannot create AI request", e));
         }
+    }
+
+    TriageResult parseResponse(String responseBody) throws IOException {
+        var response = mapper.readTree(responseBody);
+        var choices = response.path("choices");
+        if (!choices.isArray() || choices.isEmpty()) {
+            throw new IOException("AI response does not contain choices");
+        }
+
+        var content = choices.path(0).path("message").path("content");
+        if (!content.isTextual() || content.textValue().isBlank()) {
+            throw new IOException("AI response does not contain message content");
+        }
+
+        var classification = mapper.readTree(content.textValue());
+        var category = requiredText(classification, "category");
+        var subcategory = requiredText(classification, "subcategory");
+        return new TriageResult(category, 0, "UNKNOWN", category, subcategory, Instant.now());
+    }
+
+    private static String requiredText(com.fasterxml.jackson.databind.JsonNode object, String field) throws IOException {
+        var value = object.path(field);
+        if (!value.isTextual() || value.textValue().isBlank()) {
+            throw new IOException("AI message content does not contain " + field);
+        }
+        return value.textValue();
     }
 
     public static final class AiServiceException extends RuntimeException {

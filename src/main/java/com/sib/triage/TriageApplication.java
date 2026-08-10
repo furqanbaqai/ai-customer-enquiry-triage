@@ -6,7 +6,6 @@ import com.sib.triage.ai.AiHttpClassifier;
 import com.sib.triage.config.AppConfig;
 import com.sib.triage.messaging.MqEnquiryConsumer;
 import com.sib.triage.persistence.SqlServerTriageRepository;
-import com.sib.triage.routing.RestDownstreamRouter;
 import com.sib.triage.service.TriagePipeline;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
@@ -29,8 +28,7 @@ public final class TriageApplication {
         var dataSource = dataSource(config.database());
         var classifier = new AiHttpClassifier(httpClient, mapper, config.ai());
         var repository = new SqlServerTriageRepository(dataSource);
-        var router = new RestDownstreamRouter(httpClient, mapper, config.routing(), config.urgencyThreshold());
-        var pipeline = new TriagePipeline(mapper, classifier, repository, router, executor);
+        var pipeline = new TriagePipeline(mapper, classifier, repository, executor);
         var consumer = new MqEnquiryConsumer(config.mq(), pipeline, executor);
 
         Runtime.getRuntime().addShutdownHook(Thread.ofPlatform().name("shutdown").unstarted(() -> {

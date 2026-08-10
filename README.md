@@ -3,9 +3,8 @@
 A lightweight, Spring-free Java 21 service that:
 
 1. consumes customer enquiries from IBM MQ;
-2. calls an AI service to classify intent, urgency, sentiment, and destination team;
-3. stores the enquiry and classification in Microsoft SQL Server; and
-4. sends urgent enquiries to a downstream routing REST API.
+2. calls an AI service to classify each enquiry; and
+3. stores the enquiry and classification in Microsoft SQL Server.
 
 Message processing, HTTP calls, and blocking database work are dispatched using Java virtual threads.
 
@@ -16,7 +15,6 @@ Message processing, HTTP calls, and blocking database work are dispatched using 
 - An IBM MQ queue manager, server-connection channel, and request queue
 - Microsoft SQL Server and credentials permitted to read/write the triage table
 - An AI classification HTTP endpoint
-- A downstream routing HTTP endpoint
 
 Verify the local toolchain:
 
@@ -69,10 +67,6 @@ export APP_CONFIG_FILE=/secure/triage.properties
 | `AI_API_URL` | Yes | — | AI classification endpoint |
 | `AI_API_KEY` | Yes | — | Bearer token for the AI endpoint |
 | `AI_TIMEOUT_SECONDS` | No | `15` | AI request timeout |
-| `ROUTING_API_URL` | Yes | — | Urgent-case routing endpoint |
-| `ROUTING_API_KEY` | No | empty | Bearer token for the routing endpoint |
-| `ROUTING_TIMEOUT_SECONDS` | No | `10` | Routing request timeout |
-| `URGENCY_THRESHOLD` | No | `8` | Minimum urgency score that triggers routing |
 
 For production, inject secrets through the deployment platform. For example, a temporary PowerShell session can be configured with:
 
@@ -85,7 +79,6 @@ $env:DB_USER = 'triage_app'
 $env:DB_PASSWORD = '<secret>'
 $env:AI_API_URL = 'https://ai.internal.example/v1/classify'
 $env:AI_API_KEY = '<secret>'
-$env:ROUTING_API_URL = 'https://routing.internal.example/v1/escalations'
 ```
 
 ## Database setup
@@ -149,26 +142,29 @@ Send a Jakarta JMS `TextMessage` containing JSON shaped like:
 
 `enquiryId`, `customerId`, and `message` are required. `receivedAt` may be omitted, in which case the application uses the current time.
 
-Set `JMSCorrelationID` on the message when possible. If it is absent, the service uses `JMSMessageID`; if both are absent, it generates a UUID. The ID is forwarded as `X-Correlation-ID` to both HTTP services and stored in SQL Server.
+Set `JMSCorrelationID` on the message when possible. If it is absent, the service uses `JMSMessageID`; if both are absent, it generates a UUID. The ID is forwarded to the AI API as `X-Correlation-ID` and stored in SQL Server.
 
 ### AI service response
 
-The endpoint configured by `AI_API_URL` must return a successful `2xx` response with JSON shaped like:
+The endpoint configured by `AI_API_URL` must return a successful OpenAI-compatible chat-completion response. The classification is JSON encoded in `choices[0].message.content`:
 
 ```json
 {
-  "intent": "CARD_FRAUD",
-  "urgencyScore": 9,
-  "sentiment": "NEGATIVE",
-  "recommendedTeam": "Fraud Operations",
-  "rationale": "Missing card and an unrecognized transaction require immediate review.",
-  "classifiedAt": "2026-08-08T12:00:01Z"
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "{\"category\":\"Card Fraud/Errors\",\"subcategory\":\"Duplicate Charges\"}"
+      }
+    }
+  ],
+  "object": "chat.completion"
 }
 ```
 
-`urgencyScore` must be between `0` and `10`. `classifiedAt` may be omitted and will default to the current time. The request uses `Authorization: Bearer <AI_API_KEY>` and `X-Correlation-ID` headers.
-
-When the score is greater than or equal to `URGENCY_THRESHOLD`, the persisted result is also posted asynchronously to `ROUTING_API_URL`.
+Both inner fields are required and must be non-blank strings. For compatibility with the existing storage model, `category` is mapped to `intent` and `recommendedTeam`, while `subcategory` is mapped to `rationale`. `urgencyScore` is set to `0`, `sentiment` to `UNKNOWN`, and `classifiedAt` to the processing time. The request uses `Authorization: Bearer <AI_API_KEY>` and `X-Correlation-ID` headers.
 
 ## Troubleshooting
 
@@ -176,7 +172,6 @@ When the score is greater than or equal to `URGENCY_THRESHOLD`, the persisted re
 - **MQ initialization failure:** check the host, port, channel, queue manager, queue existence, credentials, and MQ authority records.
 - **SQL Server connection failure:** verify the JDBC URL, TLS options, database name, credentials, and network access.
 - **AI failures:** non-`2xx` responses and invalid JSON are treated as failures and surfaced immediately without application-level retries.
-- **No downstream notification:** confirm the returned urgency score meets `URGENCY_THRESHOLD` and inspect the routing endpoint response.
 - **Maven PKIX error:** update the JDK trust store or configure Maven to use the organization-approved certificate store; do not disable TLS verification in production.
 
 Logs are written to standard output using the format configured in `src/main/resources/logback.xml` and include the correlation ID where processing context is available.

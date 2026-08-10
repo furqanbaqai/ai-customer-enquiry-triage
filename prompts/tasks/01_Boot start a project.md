@@ -1,6 +1,6 @@
 Role: Principal Java Software Engineer
 
-Task: Update and extend the existing, locally checked-out repository `ai-customer-enquiry-triage`. Implement modern, lightweight, Spring-free Java 21+ architecture to process customer enquiry messages, run AI classification, store results, and route downstream notifications.
+Task: Update and extend the existing, locally checked-out repository `ai-customer-enquiry-triage`. Implement modern, lightweight, Spring-free Java 21+ architecture to process customer enquiry messages, run AI classification, and store results.
 
 ---
 
@@ -32,8 +32,7 @@ Task: Update and extend the existing, locally checked-out repository `ai-custome
 
 4. **Pipeline Execution Flow:**
    * **Ingest:** Consume customer enquiry payloads from `AI.CUST.ENQ.TRIAGE.REQUEST.Q`.
-   * **Parse & Triage:** Parse JSON into a strongly typed `CustomerEnquiry` Record. Call an upstream AI/LLM classification service via `HttpClient` to obtain intent, urgency score, sentiment, and team routing recommendations.
-   * **Route:** Issue non-blocking downstream REST calls for high-urgency/escalated cases.
+   * **Parse & Triage:** Parse JSON into a strongly typed `CustomerEnquiry` Record. Call an upstream AI/LLM classification service via `HttpClient` to obtain the classification.
 
 5. **Code Style & Infrastructure Guidelines:**
    * Modern Java 21 semantics: Records, Pattern Matching, Sealed Types, and `var` where readable.
