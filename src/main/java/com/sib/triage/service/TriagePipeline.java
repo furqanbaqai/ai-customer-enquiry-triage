@@ -20,8 +20,12 @@ public final class TriagePipeline {
     private final Executor executor;
 
     public TriagePipeline(ObjectMapper mapper, TriageClassifier classifier, TriageRepository repository,
-                          DownstreamRouter router, Executor executor) {
-        this.mapper = mapper; this.classifier = classifier; this.repository = repository; this.router = router; this.executor = executor;
+            DownstreamRouter router, Executor executor) {
+        this.mapper = mapper;
+        this.classifier = classifier;
+        this.repository = repository;
+        this.router = router;
+        this.executor = executor;
     }
 
     public CompletionStage<Void> process(String json, String correlationId) {
@@ -30,22 +34,30 @@ public final class TriagePipeline {
             LOGGER.info("Enquiry received enquiryId={}", enquiry.enquiryId());
             return classifier.classify(enquiry, correlationId)
                     .thenCompose(result -> java.util.concurrent.CompletableFuture.runAsync(
-                            () -> withCorrelation(correlationId, () -> repository.save(enquiry, result, correlationId)), executor)
+                            () -> withCorrelation(correlationId, () -> repository.save(enquiry, result, correlationId)),
+                            executor)
                             .thenCompose(ignored -> router.route(enquiry, result, correlationId)))
                     .whenComplete((ignored, error) -> withCorrelation(correlationId, () -> {
-                        if (error == null) LOGGER.info("Enquiry processing completed enquiryId={}", enquiry.enquiryId());
-                        else LOGGER.error("Enquiry processing failed enquiryId={}", enquiry.enquiryId(), error);
+                        if (error == null)
+                            LOGGER.info("Enquiry processing completed enquiryId={}", enquiry.enquiryId());
+                        else
+                            LOGGER.error("Enquiry processing failed enquiryId={}", enquiry.enquiryId(), error);
                     }));
         } catch (Exception e) {
-            return java.util.concurrent.CompletableFuture.failedFuture(new InvalidEnquiryException("Invalid enquiry payload", e));
+            return java.util.concurrent.CompletableFuture
+                    .failedFuture(new InvalidEnquiryException("Invalid enquiry payload", e));
         }
     }
 
     private static void withCorrelation(String correlationId, Runnable action) {
-        try (var ignored = MDC.putCloseable("correlationId", correlationId)) { action.run(); }
+        try (var ignored = MDC.putCloseable("correlationId", correlationId)) {
+            action.run();
+        }
     }
 
     public static final class InvalidEnquiryException extends RuntimeException {
-        public InvalidEnquiryException(String message, Throwable cause) { super(message, cause); }
+        public InvalidEnquiryException(String message, Throwable cause) {
+            super(message, cause);
+        }
     }
 }

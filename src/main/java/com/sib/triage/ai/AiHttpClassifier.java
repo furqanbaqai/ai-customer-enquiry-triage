@@ -8,18 +8,50 @@ import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
 import io.github.resilience4j.retry.Retry;
 import io.github.resilience4j.retry.RetryConfig;
+import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.function.Supplier;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public final class AiHttpClassifier implements TriageClassifier, AutoCloseable {
+    private static final Logger LOGGER = LoggerFactory.getLogger(AiHttpClassifier.class);
+    private static final String PROMPT_CLASSPATH = "com/sib/triage/ai/prompts/TriagePipelinePromptv1";
+    private static final String PROMPT_CLASSPATH_MD = PROMPT_CLASSPATH + ".md";
+    private static final String PROMPT_TEMPLATE;
+
+    static {
+        String prompt = null;
+        try (InputStream in = Thread.currentThread().getContextClassLoader().getResourceAsStream(PROMPT_CLASSPATH)) {
+            if (in != null) prompt = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            LOGGER.warn("Failed to read prompt {}: {}", PROMPT_CLASSPATH, e.getMessage());
+        }
+        if (prompt == null) {
+            try (InputStream in = Thread.currentThread().getContextClassLoader().getResourceAsStream(PROMPT_CLASSPATH_MD)) {
+                if (in != null) prompt = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+            } catch (IOException e) {
+                LOGGER.warn("Failed to read prompt {}: {}", PROMPT_CLASSPATH_MD, e.getMessage());
+            }
+        }
+        if (prompt == null) throw new IllegalStateException("Missing required prompt resource: " + PROMPT_CLASSPATH + "(.md)");
+        PROMPT_TEMPLATE = prompt;
+        LOGGER.info("Loaded AI prompt template (length={} chars)", PROMPT_TEMPLATE.length());
+    }
+
     private final HttpClient client;
     private final ObjectMapper mapper;
     private final AppConfig.HttpEndpoint endpoint;
@@ -48,7 +80,23 @@ public final class AiHttpClassifier implements TriageClassifier, AutoCloseable {
 
     private CompletionStage<TriageResult> invoke(CustomerEnquiry enquiry, String correlationId) {
         try {
-            var body = mapper.writeValueAsString(new AiRequest(enquiry.enquiryId(), enquiry.customerId(), enquiry.message()));
+            // Replace placeholder in prompt with incoming message content
+            var prompt = PROMPT_TEMPLATE.replace("{INCOMING_TEXT}", enquiry.message() == null ? "" : enquiry.message());
+
+            // Build request payload according to required structure
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("model", "/models/qwen2.5-3b-instruct-q4_k_m.gguf");
+            Map<String, String> message = new HashMap<>();
+            message.put("role", "user");
+            message.put("content", prompt);
+            payload.put("messages", List.of(message));
+            payload.put("temperature", 0.1);
+            payload.put("max_tokens", 200);
+            payload.put("top_p", 0.9);
+            payload.put("stream", false);
+
+            var body = mapper.writeValueAsString(payload);
+
             var request = HttpRequest.newBuilder(URI.create(endpoint.url())).timeout(endpoint.timeout())
                     .header("Content-Type", "application/json").header("Accept", "application/json")
                     .header("Authorization", "Bearer " + endpoint.apiKey()).header("X-Correlation-ID", correlationId)
@@ -64,7 +112,6 @@ public final class AiHttpClassifier implements TriageClassifier, AutoCloseable {
         }
     }
 
-    private record AiRequest(String enquiryId, String customerId, String message) {}
     public static final class AiServiceException extends RuntimeException {
         public AiServiceException(String message) { super(message); }
         public AiServiceException(String message, Throwable cause) { super(message, cause); }
