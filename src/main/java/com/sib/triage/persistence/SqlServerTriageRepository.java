@@ -28,12 +28,7 @@ public final class SqlServerTriageRepository implements TriageRepository {
             statement.setString(4, enquiry.customerId());
             statement.setString(5, enquiry.message());
             statement.setTimestamp(6, Timestamp.from(enquiry.receivedAt()));
-            statement.setString(7, result.intent());
-            statement.setInt(8, result.urgencyScore());
-            statement.setString(9, result.sentiment());
-            statement.setString(10, result.recommendedTeam());
-            statement.setString(11, result.rationale());
-            statement.setTimestamp(12, Timestamp.from(result.classifiedAt()));
+
             statement.executeUpdate();
         } catch (SQLException e) {
             throw new PersistenceException("Failed to persist enquiry " + enquiry.enquiryId(), e);

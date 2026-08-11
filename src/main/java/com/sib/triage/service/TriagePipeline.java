@@ -51,8 +51,9 @@ public final class TriagePipeline {
             LOGGER.info("Enquiry received enquiryId={}", enquiry.enquiryId());
             return classifier.classify(enquiry, correlationId)
                     .thenCompose(result -> java.util.concurrent.CompletableFuture.runAsync(
-                            () -> withCorrelation(correlationId, () -> repository.save(enquiry, result, correlationId)),
-                            executor))
+                            // TODO! Add a method to save the enquiry and classification result in the repository
+                            () -> LOGGER.info("Saving enquiry and classification result in TB"),executor
+                        ))
                     .whenComplete((ignored, error) -> withCorrelation(correlationId, () -> {
                         if (error == null)
                             LOGGER.info("Enquiry processing completed enquiryId={}", enquiry.enquiryId());

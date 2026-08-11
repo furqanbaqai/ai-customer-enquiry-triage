@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.sib.triage.domain.TriageResult;
 import org.junit.jupiter.api.Test;
-import java.time.Instant;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
@@ -13,12 +12,16 @@ import static org.junit.jupiter.api.Assertions.*;
 class TriagePipelineTest {
     @Test void classifiesAndPersistsWithCorrelationId() {
         var mapper = new ObjectMapper().registerModule(new JavaTimeModule());
-        var result = new TriageResult("CARD_LOST", 9, "NEGATIVE", "Cards", "Urgent", Instant.now());
+        var result = new TriageResult("TEST");
         var persistedCorrelation = new AtomicReference<String>();
+        var persistedResult = new AtomicReference<TriageResult>();
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
             var pipeline = new TriagePipeline(mapper, new EnquirySchemaValidator(),
                     (enquiry, correlation) -> CompletableFuture.completedFuture(result),
-                    (enquiry, triage, correlation) -> persistedCorrelation.set(correlation),
+                    (enquiry, triage, correlation) -> {
+                        persistedCorrelation.set(correlation);
+                        persistedResult.set(triage);
+                    },
                     executor);
             pipeline.process("""
                     {"meta":{"refNumber":"e-1","channel":"WebSite","reqIssuedAt":"2026-08-08T11:59:00Z"},
@@ -28,6 +31,7 @@ class TriagePipelineTest {
                     """, "corr-123").toCompletableFuture().join();
         }
         assertEquals("corr-123", persistedCorrelation.get());
+        assertSame(result, persistedResult.get());
     }
 
     @Test void rejectsMalformedPayload() {

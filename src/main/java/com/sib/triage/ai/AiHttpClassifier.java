@@ -11,7 +11,6 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
-import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -29,18 +28,22 @@ public final class AiHttpClassifier implements TriageClassifier {
     static {
         String prompt = null;
         try (InputStream in = Thread.currentThread().getContextClassLoader().getResourceAsStream(PROMPT_CLASSPATH)) {
-            if (in != null) prompt = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+            if (in != null)
+                prompt = new String(in.readAllBytes(), StandardCharsets.UTF_8);
         } catch (IOException e) {
             LOGGER.warn("Failed to read prompt {}: {}", PROMPT_CLASSPATH, e.getMessage());
         }
         if (prompt == null) {
-            try (InputStream in = Thread.currentThread().getContextClassLoader().getResourceAsStream(PROMPT_CLASSPATH_MD)) {
-                if (in != null) prompt = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+            try (InputStream in = Thread.currentThread().getContextClassLoader()
+                    .getResourceAsStream(PROMPT_CLASSPATH_MD)) {
+                if (in != null)
+                    prompt = new String(in.readAllBytes(), StandardCharsets.UTF_8);
             } catch (IOException e) {
                 LOGGER.warn("Failed to read prompt {}: {}", PROMPT_CLASSPATH_MD, e.getMessage());
             }
         }
-        if (prompt == null) throw new IllegalStateException("Missing required prompt resource: " + PROMPT_CLASSPATH + "(.md)");
+        if (prompt == null)
+            throw new IllegalStateException("Missing required prompt resource: " + PROMPT_CLASSPATH + "(.md)");
         PROMPT_TEMPLATE = prompt;
         LOGGER.info("Loaded AI prompt template (length={} chars)", PROMPT_TEMPLATE.length());
     }
@@ -50,7 +53,9 @@ public final class AiHttpClassifier implements TriageClassifier {
     private final AppConfig.HttpEndpoint endpoint;
 
     public AiHttpClassifier(HttpClient client, ObjectMapper mapper, AppConfig.HttpEndpoint endpoint) {
-        this.client = client; this.mapper = mapper; this.endpoint = endpoint;
+        this.client = client;
+        this.mapper = mapper;
+        this.endpoint = endpoint;
     }
 
     @Override
@@ -84,11 +89,15 @@ public final class AiHttpClassifier implements TriageClassifier {
             return client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).thenApply(response -> {
                 if (response.statusCode() < 200 || response.statusCode() >= 300)
                     throw new AiServiceException("AI service returned HTTP " + response.statusCode());
-                try { return parseResponse(response.body()); }
-                catch (Exception e) { throw new AiServiceException("Invalid AI response", e); }
+                try {
+                    return parseResponse(response.body());
+                } catch (Exception e) {
+                    throw new AiServiceException("Invalid AI response", e);
+                }
             });
         } catch (Exception e) {
-            return CompletableFuture.failedFuture(e instanceof AiServiceException ? e : new AiServiceException("Cannot create AI request", e));
+            return CompletableFuture.failedFuture(
+                    e instanceof AiServiceException ? e : new AiServiceException("Cannot create AI request", e));
         }
     }
 
@@ -104,22 +113,16 @@ public final class AiHttpClassifier implements TriageClassifier {
             throw new IOException("AI response does not contain message content");
         }
 
-        var classification = mapper.readTree(content.textValue());
-        var category = requiredText(classification, "category");
-        var subcategory = requiredText(classification, "subcategory");
-        return new TriageResult(category, 0, "UNKNOWN", category, subcategory, Instant.now());
-    }
-
-    private static String requiredText(com.fasterxml.jackson.databind.JsonNode object, String field) throws IOException {
-        var value = object.path(field);
-        if (!value.isTextual() || value.textValue().isBlank()) {
-            throw new IOException("AI message content does not contain " + field);
-        }
-        return value.textValue();
+        return new TriageResult(content.textValue());
     }
 
     public static final class AiServiceException extends RuntimeException {
-        public AiServiceException(String message) { super(message); }
-        public AiServiceException(String message, Throwable cause) { super(message, cause); }
+        public AiServiceException(String message) {
+            super(message);
+        }
+
+        public AiServiceException(String message, Throwable cause) {
+            super(message, cause);
+        }
     }
 }

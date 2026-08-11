@@ -27,21 +27,24 @@ class AiHttpClassifierTest {
                   "object": "chat.completion"
                 }
                 """);
-
-        assertEquals("Card Fraud/Errors", result.intent());
-        assertEquals("Card Fraud/Errors", result.recommendedTeam());
-        assertEquals("Duplicate Charges", result.rationale());
-        assertEquals("UNKNOWN", result.sentiment());
-        assertEquals(0, result.urgencyScore());
+        assertEquals("{\"category\":\"Card Fraud/Errors\",\"subcategory\":\"Duplicate Charges\"}",
+                result.content());
     }
 
     @Test void rejectsMissingChoices() {
         assertThrows(Exception.class, () -> classifier.parseResponse("{\"choices\":[]}"));
     }
 
-    @Test void rejectsInvalidEmbeddedJson() {
-        assertThrows(Exception.class, () -> classifier.parseResponse("""
+    @Test void preservesNonJsonMessageContent() throws Exception {
+        var result = classifier.parseResponse("""
                 {"choices":[{"message":{"content":"not-json"}}]}
+                """);
+        assertEquals("not-json", result.content());
+    }
+
+    @Test void rejectsBlankMessageContent() {
+        assertThrows(Exception.class, () -> classifier.parseResponse("""
+                {"choices":[{"message":{"content":"   "}}]}
                 """));
     }
 }
