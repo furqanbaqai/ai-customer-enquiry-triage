@@ -7,6 +7,8 @@ import com.sib.triage.service.TriagePipeline;
 import jakarta.jms.JMSConsumer;
 import jakarta.jms.JMSContext;
 import jakarta.jms.JMSException;
+import jakarta.jms.JMSProducer;
+import jakarta.jms.Queue;
 import jakarta.jms.BytesMessage;
 import jakarta.jms.Message;
 import jakarta.jms.MessageFormatException;
@@ -23,7 +25,10 @@ public final class MqEnquiryConsumer implements AutoCloseable {
     private final TriagePipeline pipeline;
     private final ExecutorService processingExecutor;
     private final JMSContext context;
+    private final JMSContext backoutContext;
     private final JMSConsumer consumer;
+    private final JMSProducer backoutProducer;
+    private final Queue backoutQueue;
 
     public MqEnquiryConsumer(AppConfig.Mq config, TriagePipeline pipeline, ExecutorService processingExecutor) {
         this.pipeline = pipeline;
@@ -34,6 +39,11 @@ public final class MqEnquiryConsumer implements AutoCloseable {
                     ? factory.createContext(JMSContext.AUTO_ACKNOWLEDGE)
                     : factory.createContext(config.username(), config.password(), JMSContext.AUTO_ACKNOWLEDGE);
             this.consumer = context.createConsumer(context.createQueue("queue:///" + config.queueName()));
+            this.backoutContext = config.username().isBlank()
+                    ? factory.createContext(JMSContext.AUTO_ACKNOWLEDGE)
+                    : factory.createContext(config.username(), config.password(), JMSContext.AUTO_ACKNOWLEDGE);
+            this.backoutProducer = backoutContext.createProducer();
+            this.backoutQueue = backoutContext.createQueue("queue:///" + config.backoutQueueName());
         } catch (RuntimeException | JMSException e) {
             throw new IllegalStateException("Unable to initialize IBM MQ consumer", e);
         }
@@ -57,10 +67,29 @@ public final class MqEnquiryConsumer implements AutoCloseable {
 
     private void dispatch(String payload, String correlationId) {
         try {
-            pipeline.process(payload, correlationId);
+            pipeline.process(payload, correlationId).whenComplete((ignored, error) -> {
+                if (isInvalidEnquiry(error)) sendToBackout(payload, correlationId, error);
+            });
         } catch (Exception e) {
             LOGGER.error("Unable to dispatch MQ message correlationId={}", correlationId, e);
         }
+    }
+
+    private synchronized void sendToBackout(String payload, String correlationId, Throwable cause) {
+        try {
+            backoutProducer.setJMSCorrelationID(correlationId).send(backoutQueue, payload);
+            LOGGER.warn("Invalid enquiry moved to backout queue correlationId={}", correlationId, cause);
+        } catch (RuntimeException e) {
+            LOGGER.error("Unable to move invalid enquiry to backout queue correlationId={}", correlationId, e);
+        }
+    }
+
+    private static boolean isInvalidEnquiry(Throwable error) {
+        while (error != null) {
+            if (error instanceof TriagePipeline.InvalidEnquiryException) return true;
+            error = error.getCause();
+        }
+        return false;
     }
 
     private static String payload(Message message) throws JMSException {
@@ -112,5 +141,6 @@ public final class MqEnquiryConsumer implements AutoCloseable {
     @Override public void close() {
         consumer.close();
         context.close();
+        backoutContext.close();
     }
 }

@@ -23,4 +23,17 @@ class AppConfigTest {
         var error = assertThrows(IllegalStateException.class, () -> config.required("DB_URL"));
         assertTrue(error.getMessage().contains("DB_URL"));
     }
+
+    @Test void backoutQueueHasDefaultAndEnvironmentOverride() {
+        var requiredMq = Map.of(
+                "MQ_HOST", "localhost", "MQ_CHANNEL", "DEV.APP.SVRCONN",
+                "MQ_QUEUE_MANAGER", "QM1", "MQ_BACKOUT_QUEUE_NAME", "CUSTOM.BACKOUT.Q");
+        assertEquals("CUSTOM.BACKOUT.Q",
+                AppConfig.from(requiredMq, directory.resolve("absent")).mq().backoutQueueName());
+
+        var withoutOverride = new java.util.HashMap<>(requiredMq);
+        withoutOverride.remove("MQ_BACKOUT_QUEUE_NAME");
+        assertEquals(AppConfig.DEFAULT_BACKOUT_QUEUE,
+                AppConfig.from(withoutOverride, directory.resolve("absent")).mq().backoutQueueName());
+    }
 }

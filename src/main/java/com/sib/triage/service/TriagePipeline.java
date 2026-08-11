@@ -13,13 +13,16 @@ import java.util.concurrent.Executor;
 public final class TriagePipeline {
     private static final Logger LOGGER = LoggerFactory.getLogger(TriagePipeline.class);
     private final ObjectMapper mapper;
+    private final EnquirySchemaValidator schemaValidator;
     private final TriageClassifier classifier;
     private final TriageRepository repository;
     private final Executor executor;
 
-    public TriagePipeline(ObjectMapper mapper, TriageClassifier classifier, TriageRepository repository,
+    public TriagePipeline(ObjectMapper mapper, EnquirySchemaValidator schemaValidator,
+            TriageClassifier classifier, TriageRepository repository,
             Executor executor) {
         this.mapper = mapper;
+        this.schemaValidator = schemaValidator;
         this.classifier = classifier;
         this.repository = repository;
         this.executor = executor;
@@ -43,6 +46,7 @@ public final class TriagePipeline {
      */
     public CompletionStage<Void> process(String json, String correlationId) {
         try {
+            schemaValidator.validate(json);
             var enquiry = mapper.readValue(json, CustomerEnquiry.class);
             LOGGER.info("Enquiry received enquiryId={}", enquiry.enquiryId());
             return classifier.classify(enquiry, correlationId)

@@ -7,6 +7,7 @@ import com.sib.triage.config.AppConfig;
 import com.sib.triage.messaging.MqEnquiryConsumer;
 import com.sib.triage.persistence.SqlServerTriageRepository;
 import com.sib.triage.service.TriagePipeline;
+import com.sib.triage.service.EnquirySchemaValidator;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import org.slf4j.Logger;
@@ -28,7 +29,7 @@ public final class TriageApplication {
         var dataSource = dataSource(config.database());
         var classifier = new AiHttpClassifier(httpClient, mapper, config.ai());
         var repository = new SqlServerTriageRepository(dataSource);
-        var pipeline = new TriagePipeline(mapper, classifier, repository, executor);
+        var pipeline = new TriagePipeline(mapper, new EnquirySchemaValidator(), classifier, repository, executor);
         var consumer = new MqEnquiryConsumer(config.mq(), pipeline, executor);
 
         Runtime.getRuntime().addShutdownHook(Thread.ofPlatform().name("shutdown").unstarted(() -> {

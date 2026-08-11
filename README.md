@@ -58,6 +58,7 @@ export APP_CONFIG_FILE=/secure/triage.properties
 | `MQ_CHANNEL` | Yes | — | Server-connection channel |
 | `MQ_QUEUE_MANAGER` | Yes | — | Queue manager name |
 | `MQ_QUEUE_NAME` | No | `AI.CUST.ENQ.TRIAGE.REQUEST.Q` | Request queue name |
+| `MQ_BACKOUT_QUEUE_NAME` | No | `AI.CUST.ENQ.TRIAGE.BACKOUT.Q` | Queue for malformed or schema-invalid requests |
 | `MQ_USER` | No | empty | MQ application user |
 | `MQ_PASSWORD` | No | empty | MQ application password |
 | `DB_URL` | Yes | — | SQL Server JDBC URL |
@@ -74,6 +75,8 @@ For production, inject secrets through the deployment platform. For example, a t
 $env:MQ_HOST = 'mq.internal.example'
 $env:MQ_CHANNEL = 'TRIAGE.SVRCONN'
 $env:MQ_QUEUE_MANAGER = 'QM_PROD'
+$env:MQ_QUEUE_NAME = 'AI.CUST.ENQ.TRIAGE.REQUEST.Q'
+$env:MQ_BACKOUT_QUEUE_NAME = 'AI.CUST.ENQ.TRIAGE.BACKOUT.Q'
 $env:DB_URL = 'jdbc:sqlserver://sql.internal.example:1433;databaseName=triage;encrypt=true'
 $env:DB_USER = 'triage_app'
 $env:DB_PASSWORD = '<secret>'
@@ -93,13 +96,14 @@ The application does not automatically apply schema migrations. The script must 
 
 ## IBM MQ setup
 
-The queue configured by `MQ_QUEUE_NAME` must exist before startup. Its default name is:
+The queues configured by `MQ_QUEUE_NAME` and `MQ_BACKOUT_QUEUE_NAME` must exist before startup. Their default names are:
 
 ```text
 AI.CUST.ENQ.TRIAGE.REQUEST.Q
+AI.CUST.ENQ.TRIAGE.BACKOUT.Q
 ```
 
-The configured MQ user needs permission to connect to the queue manager and consume from this queue. The application uses IBM MQ client transport rather than bindings mode.
+The configured MQ user needs permission to consume from the request queue and put messages on the backout queue. The application uses IBM MQ client transport rather than bindings mode.
 
 ## Build and test
 
@@ -129,20 +133,44 @@ A successful startup logs both `IBM MQ consumer started` and `AI customer enquir
 
 ### Incoming IBM MQ message
 
-Send a Jakarta JMS `TextMessage` containing JSON shaped like:
+Send a Jakarta JMS `TextMessage` or UTF-8 `BytesMessage` whose body is a JSON object matching
+[`equiry-request-schema-v1.0.json`](src/main/resources/com/sib/triage/ai/schema/equiry-request-schema-v1.0.json):
 
 ```json
 {
-  "enquiryId": "ENQ-2026-0001",
-  "customerId": "CUST-10042",
+  "meta": {
+    "refNumber": "ENQ-2026-0001",
+    "channel": "WebSite",
+    "reqIssuedAt": "2026-08-08T11:59:30Z"
+  },
+  "customerId": "ABCDEF123456",
+  "mobileNumber": "+971 50 123 4567",
+  "firstName": "Sara",
+  "lastName": "Khan",
+  "emailAddress": "sara.khan@example.com",
   "message": "My card is missing and I can see an unknown transaction.",
   "receivedAt": "2026-08-08T12:00:00Z"
 }
 ```
 
-`enquiryId`, `customerId`, and `message` are required. `receivedAt` may be omitted, in which case the application uses the current time.
+The required fields are `meta`, `mobileNumber`, `firstName`, `lastName`, `emailAddress`, `message`, and `receivedAt`. Within `meta`, `refNumber`, `channel`, and `reqIssuedAt` are required. `customerId` is optional; when supplied, it must contain exactly 12 alphanumeric characters.
+
+The following schema constraints are enforced before AI classification:
+
+- `meta.refNumber` must contain 1–36 characters.
+- `meta.channel` must be one of `WebSite`, `Mobile App`, `Web App`, `ATM`, `MFK`, `IVR`, or `Other`.
+- `meta.reqIssuedAt` and `receivedAt` must be ISO 8601 date-time values.
+- `mobileNumber` must match the international-number pattern defined by the schema.
+- `firstName` and `lastName` may contain at most 35 characters each.
+- `emailAddress` must be a valid email address.
+- `message` must contain 1–512 characters.
+- Additional properties are rejected at both the root and `meta` levels.
+
+`meta.refNumber` is used as the enquiry ID stored in SQL Server. All date-time values should include a UTC offset, for example `2026-08-08T12:00:00Z`.
 
 Set `JMSCorrelationID` on the message when possible. If it is absent, the service uses `JMSMessageID`; if both are absent, it generates a UUID. The ID is forwarded to the AI API as `X-Correlation-ID` and stored in SQL Server.
+
+If the body is malformed JSON, cannot be deserialized, or fails schema validation, the original JSON body is sent to `MQ_BACKOUT_QUEUE_NAME` with the same correlation ID. AI endpoint and database failures are logged as processing failures and are not routed to the backout queue.
 
 ### AI service response
 

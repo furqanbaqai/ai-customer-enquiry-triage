@@ -4,6 +4,7 @@ MQ_PORT=1414
 MQ_CHANNEL=DEV.APP.SVRCONN
 MQ_QUEUE_MANAGER=QM1
 MQ_QUEUE_NAME=AI.CUST.ENQ.TRIAGE.REQUEST.Q
+MQ_BACKOUT_QUEUE_NAME=AI.CUST.ENQ.TRIAGE.BACKOUT.Q
 MQ_USER=app
 MQ_PASSWORD=replace-me
 DB_URL=jdbc:sqlserver://localhost:1433;databaseName=triage;encrypt=true;trustServerCertificate=true
