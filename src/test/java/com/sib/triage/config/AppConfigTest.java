@@ -36,4 +36,17 @@ class AppConfigTest {
         assertEquals(AppConfig.DEFAULT_BACKOUT_QUEUE,
                 AppConfig.from(withoutOverride, directory.resolve("absent")).mq().backoutQueueName());
     }
+
+    @Test void resultQueueHasDefaultAndEnvironmentOverride() {
+        var requiredMq = Map.of(
+                "MQ_HOST", "localhost", "MQ_CHANNEL", "DEV.APP.SVRCONN",
+                "MQ_QUEUE_MANAGER", "QM1", "MQ_RESULT_QUEUE_NAME", "CUSTOM.RESULT.Q");
+        assertEquals("CUSTOM.RESULT.Q",
+                AppConfig.from(requiredMq, directory.resolve("absent")).mq().resultQueueName());
+
+        var withoutOverride = new java.util.HashMap<>(requiredMq);
+        withoutOverride.remove("MQ_RESULT_QUEUE_NAME");
+        assertEquals(AppConfig.DEFAULT_RESULT_QUEUE,
+                AppConfig.from(withoutOverride, directory.resolve("absent")).mq().resultQueueName());
+    }
 }

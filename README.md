@@ -4,9 +4,9 @@ A lightweight, Spring-free Java 21 service that:
 
 1. consumes customer enquiries from IBM MQ;
 2. calls an AI service to classify each enquiry; and
-3. stores the enquiry and classification in Microsoft SQL Server.
+3. publishes the AI response to an IBM MQ result queue.
 
-Message processing, HTTP calls, and blocking database work are dispatched using Java virtual threads.
+Message processing, HTTP calls, and result publication are dispatched using Java virtual threads.
 
 ## Prerequisites
 
@@ -59,6 +59,7 @@ export APP_CONFIG_FILE=/secure/triage.properties
 | `MQ_QUEUE_MANAGER` | Yes | — | Queue manager name |
 | `MQ_QUEUE_NAME` | No | `AI.CUST.ENQ.TRIAGE.REQUEST.Q` | Request queue name |
 | `MQ_BACKOUT_QUEUE_NAME` | No | `AI.CUST.ENQ.TRIAGE.BACKOUT.Q` | Queue for malformed or schema-invalid requests |
+| `MQ_RESULT_QUEUE_NAME` | No | `AI.CUST.ENQ.TRIAGE.RESULT.Q` | Queue receiving successful AI responses |
 | `MQ_USER` | No | empty | MQ application user |
 | `MQ_PASSWORD` | No | empty | MQ application password |
 | `DB_URL` | Yes | — | SQL Server JDBC URL |
@@ -77,6 +78,7 @@ $env:MQ_CHANNEL = 'TRIAGE.SVRCONN'
 $env:MQ_QUEUE_MANAGER = 'QM_PROD'
 $env:MQ_QUEUE_NAME = 'AI.CUST.ENQ.TRIAGE.REQUEST.Q'
 $env:MQ_BACKOUT_QUEUE_NAME = 'AI.CUST.ENQ.TRIAGE.BACKOUT.Q'
+$env:MQ_RESULT_QUEUE_NAME = 'AI.CUST.ENQ.TRIAGE.RESULT.Q'
 $env:DB_URL = 'jdbc:sqlserver://sql.internal.example:1433;databaseName=triage;encrypt=true'
 $env:DB_USER = 'triage_app'
 $env:DB_PASSWORD = '<secret>'
@@ -96,14 +98,15 @@ The application does not automatically apply schema migrations. The script must 
 
 ## IBM MQ setup
 
-The queues configured by `MQ_QUEUE_NAME` and `MQ_BACKOUT_QUEUE_NAME` must exist before startup. Their default names are:
+The queues configured by `MQ_QUEUE_NAME`, `MQ_BACKOUT_QUEUE_NAME`, and `MQ_RESULT_QUEUE_NAME` must exist before startup. Their default names are:
 
 ```text
 AI.CUST.ENQ.TRIAGE.REQUEST.Q
 AI.CUST.ENQ.TRIAGE.BACKOUT.Q
+AI.CUST.ENQ.TRIAGE.RESULT.Q
 ```
 
-The configured MQ user needs permission to consume from the request queue and put messages on the backout queue. The application uses IBM MQ client transport rather than bindings mode.
+The configured MQ user needs permission to consume from the request queue and put messages on the backout and result queues. The application uses IBM MQ client transport rather than bindings mode.
 
 ## Build and test
 
@@ -192,7 +195,19 @@ The endpoint configured by `AI_API_URL` must return a successful OpenAI-compatib
 }
 ```
 
-Both inner fields are required and must be non-blank strings. For compatibility with the existing storage model, `category` is mapped to `intent` and `recommendedTeam`, while `subcategory` is mapped to `rationale`. `urgencyScore` is set to `0`, `sentiment` to `UNKNOWN`, and `classifiedAt` to the processing time. The request uses `Authorization: Bearer <AI_API_KEY>` and `X-Correlation-ID` headers.
+`choices[0].message.content` must be a non-blank string. Its contents are treated as an opaque response and are not parsed or transformed by the service. The AI request uses `Authorization: Bearer <AI_API_KEY>` and `X-Correlation-ID` headers.
+
+### Outgoing IBM MQ result message
+
+After a successful AI call, the service sends `choices[0].message.content` unchanged to the queue configured by `MQ_RESULT_QUEUE_NAME`. The result is sent as a JMS text message and uses the same `JMSCorrelationID` selected for the incoming request.
+
+For the AI response above, the result queue receives:
+
+```json
+{"category":"Card Fraud/Errors","subcategory":"Duplicate Charges"}
+```
+
+Schema-invalid requests and failed AI calls do not produce a result message. A failure while putting the response on the result queue fails that enquiry's processing and is logged.
 
 ## Troubleshooting
 

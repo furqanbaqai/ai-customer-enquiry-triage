@@ -10,17 +10,18 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.jupiter.api.Assertions.*;
 
 class TriagePipelineTest {
-    @Test void classifiesAndPersistsWithCorrelationId() {
+    @Test void publishesAiResponseWithCorrelationId() {
         var mapper = new ObjectMapper().registerModule(new JavaTimeModule());
         var result = new TriageResult("TEST");
-        var persistedCorrelation = new AtomicReference<String>();
-        var persistedResult = new AtomicReference<TriageResult>();
+        var publishedCorrelation = new AtomicReference<String>();
+        var publishedResult = new AtomicReference<TriageResult>();
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
             var pipeline = new TriagePipeline(mapper, new EnquirySchemaValidator(),
                     (enquiry, correlation) -> CompletableFuture.completedFuture(result),
-                    (enquiry, triage, correlation) -> {
-                        persistedCorrelation.set(correlation);
-                        persistedResult.set(triage);
+                    (enquiry, triage, correlation) -> {},
+                    (triage, correlation) -> {
+                        publishedCorrelation.set(correlation);
+                        publishedResult.set(triage);
                     },
                     executor);
             pipeline.process("""
@@ -30,14 +31,15 @@ class TriagePipelineTest {
                      "message":"My card is missing","receivedAt":"2026-08-08T12:00:00Z"}
                     """, "corr-123").toCompletableFuture().join();
         }
-        assertEquals("corr-123", persistedCorrelation.get());
-        assertSame(result, persistedResult.get());
+        assertEquals("corr-123", publishedCorrelation.get());
+        assertSame(result, publishedResult.get());
     }
 
     @Test void rejectsMalformedPayload() {
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
             var pipeline = new TriagePipeline(new ObjectMapper(), new EnquirySchemaValidator(),
-                    (e, c) -> CompletableFuture.failedFuture(new AssertionError()), (e, r, c) -> {}, executor);
+                    (e, c) -> CompletableFuture.failedFuture(new AssertionError()),
+                    (e, r, c) -> {}, (r, c) -> fail("Invalid requests must not be published"), executor);
             assertThrows(Exception.class, () -> pipeline.process("{}", "corr").toCompletableFuture().join());
         }
     }
@@ -46,7 +48,8 @@ class TriagePipelineTest {
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
             var pipeline = new TriagePipeline(new ObjectMapper().registerModule(new JavaTimeModule()),
                     new EnquirySchemaValidator(),
-                    (e, c) -> CompletableFuture.failedFuture(new AssertionError()), (e, r, c) -> {}, executor);
+                    (e, c) -> CompletableFuture.failedFuture(new AssertionError()),
+                    (e, r, c) -> {}, (r, c) -> fail("Invalid requests must not be published"), executor);
             var invalid = """
                     {"meta":{"refNumber":"e-1","channel":"WebSite","reqIssuedAt":"not-a-date"},
                      "mobileNumber":"+971501234567","firstName":"Sara","lastName":"Khan",
@@ -56,5 +59,39 @@ class TriagePipelineTest {
                     () -> pipeline.process(invalid, "corr").toCompletableFuture().join());
             assertInstanceOf(TriagePipeline.InvalidEnquiryException.class, error.getCause());
         }
+    }
+
+    @Test void doesNotPublishWhenClassificationFails() {
+        var published = new java.util.concurrent.atomic.AtomicBoolean();
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var pipeline = new TriagePipeline(new ObjectMapper().registerModule(new JavaTimeModule()),
+                    new EnquirySchemaValidator(),
+                    (e, c) -> CompletableFuture.failedFuture(new IllegalStateException("AI unavailable")),
+                    (e, r, c) -> {}, (r, c) -> published.set(true), executor);
+
+            assertThrows(Exception.class, () -> pipeline.process(validPayload(), "corr").toCompletableFuture().join());
+        }
+        assertFalse(published.get());
+    }
+
+    @Test void propagatesResultPublishingFailure() {
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var pipeline = new TriagePipeline(new ObjectMapper().registerModule(new JavaTimeModule()),
+                    new EnquirySchemaValidator(),
+                    (e, c) -> CompletableFuture.completedFuture(new TriageResult("response")),
+                    (e, r, c) -> {},
+                    (r, c) -> { throw new IllegalStateException("MQ result queue unavailable"); }, executor);
+
+            assertThrows(Exception.class, () -> pipeline.process(validPayload(), "corr").toCompletableFuture().join());
+        }
+    }
+
+    private static String validPayload() {
+        return """
+                {"meta":{"refNumber":"e-1","channel":"WebSite","reqIssuedAt":"2026-08-08T11:59:00Z"},
+                 "customerId":"ABCDEF123456","mobileNumber":"+971 50 123 4567",
+                 "firstName":"Sara","lastName":"Khan","emailAddress":"sara@example.com",
+                 "message":"My card is missing","receivedAt":"2026-08-08T12:00:00Z"}
+                """;
     }
 }

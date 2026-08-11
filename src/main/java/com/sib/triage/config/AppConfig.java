@@ -12,6 +12,7 @@ import java.util.Properties;
 public final class AppConfig {
     public static final String DEFAULT_QUEUE = "AI.CUST.ENQ.TRIAGE.REQUEST.Q";
     public static final String DEFAULT_BACKOUT_QUEUE = "AI.CUST.ENQ.TRIAGE.BACKOUT.Q";
+    public static final String DEFAULT_RESULT_QUEUE = "AI.CUST.ENQ.TRIAGE.RESULT.Q";
     private final Map<String, String> environment;
     private final Properties local;
 
@@ -62,6 +63,7 @@ public final class AppConfig {
         return new Mq(required("MQ_HOST"), integer("MQ_PORT", 1414), required("MQ_CHANNEL"),
                 required("MQ_QUEUE_MANAGER"), value("MQ_QUEUE_NAME", DEFAULT_QUEUE),
                 value("MQ_BACKOUT_QUEUE_NAME", DEFAULT_BACKOUT_QUEUE),
+                value("MQ_RESULT_QUEUE_NAME", DEFAULT_RESULT_QUEUE),
                 value("MQ_USER", ""), value("MQ_PASSWORD", ""));
     }
 
@@ -74,12 +76,13 @@ public final class AppConfig {
     }
 
     public record Mq(String host, int port, String channel, String queueManager, String queueName,
-                     String backoutQueueName,
+                     String backoutQueueName, String resultQueueName,
                      String username, String password) {
         public Mq {
             Objects.requireNonNull(host);
             Objects.requireNonNull(queueName);
             Objects.requireNonNull(backoutQueueName);
+            Objects.requireNonNull(resultQueueName);
         }
     }
     public record Database(String url, String username, String password, int maximumPoolSize) {}

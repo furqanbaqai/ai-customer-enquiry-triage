@@ -5,6 +5,7 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.sib.triage.ai.AiHttpClassifier;
 import com.sib.triage.config.AppConfig;
 import com.sib.triage.messaging.MqEnquiryConsumer;
+import com.sib.triage.messaging.MqTriageResultPublisher;
 import com.sib.triage.persistence.SqlServerTriageRepository;
 import com.sib.triage.service.TriagePipeline;
 import com.sib.triage.service.EnquirySchemaValidator;
@@ -29,12 +30,15 @@ public final class TriageApplication {
         var dataSource = dataSource(config.database());
         var classifier = new AiHttpClassifier(httpClient, mapper, config.ai());
         var repository = new SqlServerTriageRepository(dataSource);
-        var pipeline = new TriagePipeline(mapper, new EnquirySchemaValidator(), classifier, repository, executor);
+        var resultPublisher = new MqTriageResultPublisher(config.mq());
+        var pipeline = new TriagePipeline(mapper, new EnquirySchemaValidator(), classifier, repository,
+                resultPublisher, executor);
         var consumer = new MqEnquiryConsumer(config.mq(), pipeline, executor);
 
         Runtime.getRuntime().addShutdownHook(Thread.ofPlatform().name("shutdown").unstarted(() -> {
             LOGGER.info("Shutting down triage service");
             consumer.close();
+            resultPublisher.close();
             dataSource.close();
             executor.close();
         }));

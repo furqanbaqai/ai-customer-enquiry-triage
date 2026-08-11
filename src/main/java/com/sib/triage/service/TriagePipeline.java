@@ -3,6 +3,7 @@ package com.sib.triage.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sib.triage.ai.TriageClassifier;
 import com.sib.triage.domain.CustomerEnquiry;
+import com.sib.triage.messaging.TriageResultPublisher;
 import com.sib.triage.persistence.TriageRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,16 +16,19 @@ public final class TriagePipeline {
     private final ObjectMapper mapper;
     private final EnquirySchemaValidator schemaValidator;
     private final TriageClassifier classifier;
+    @SuppressWarnings("unused")
     private final TriageRepository repository;
+    private final TriageResultPublisher resultPublisher;
     private final Executor executor;
 
     public TriagePipeline(ObjectMapper mapper, EnquirySchemaValidator schemaValidator,
             TriageClassifier classifier, TriageRepository repository,
-            Executor executor) {
+            TriageResultPublisher resultPublisher, Executor executor) {
         this.mapper = mapper;
         this.schemaValidator = schemaValidator;
         this.classifier = classifier;
         this.repository = repository;
+        this.resultPublisher = resultPublisher;
         this.executor = executor;
     }
 
@@ -34,7 +38,7 @@ public final class TriagePipeline {
      * The method performs the following steps:
      * 1. Parses the JSON payload into a CustomerEnquiry object
      * 2. Classifies the enquiry using the TriageClassifier with correlation tracking
-     * 3. Saves the enquiry and classification result to the repository asynchronously using the executor
+     * 3. Publishes the AI response to the configured result queue
      * 4. Logs completion or error status with correlation context
      *
      * All operations maintain correlation context for distributed tracing.
@@ -51,8 +55,8 @@ public final class TriagePipeline {
             LOGGER.info("Enquiry received enquiryId={}", enquiry.enquiryId());
             return classifier.classify(enquiry, correlationId)
                     .thenCompose(result -> java.util.concurrent.CompletableFuture.runAsync(
-                            // TODO! Add a method to save the enquiry and classification result in the repository
-                            () -> LOGGER.info("Saving enquiry and classification result in TB"),executor
+                            () -> withCorrelation(correlationId, () -> resultPublisher.publish(result, correlationId)),
+                            executor
                         ))
                     .whenComplete((ignored, error) -> withCorrelation(correlationId, () -> {
                         if (error == null)
