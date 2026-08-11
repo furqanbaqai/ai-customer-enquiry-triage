@@ -1,0 +1,14 @@
+{
+  "meta": {
+    "refNumber": "ENQ-2026-0001",
+    "channel": "WebSite",
+    "reqIssuedAt": "2026-08-08T11:59:55Z"
+  },
+  "customerId": "CUST10042001",
+  "mobileNumber": "+971501234567",
+  "firstName": "Ahmed",
+  "lastName": "Khan",
+  "emailAddress": "ahmed.khan@example.com",
+  "message": "My card is missing and I can see an unknown transaction.",
+  "receivedAt": "2026-08-08T12:00:00Z"
+}

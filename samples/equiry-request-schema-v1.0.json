@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/customer-enquiry.schema.json",
+  "title": "Customer Enquiry",
+  "description": "Schema for customer enquiry messages submitted for AI triage.",
+  "type": "object",
+  "additionalProperties": false,
+
+  "required": [
+    "meta",
+    "mobileNumber",
+    "firstName",
+    "lastName",
+    "emailAddress",
+    "message",
+    "receivedAt"
+  ],
+
+  "properties": {
+    "meta": {
+      "type": "object",
+      "additionalProperties": false,
+
+      "required": [
+        "refNumber",
+        "channel",
+        "reqIssuedAt"
+      ],
+
+      "properties": {
+        "refNumber": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 36,
+          "description": "Unique reference number for the enquiry."
+        },
+
+        "channel": {
+          "type": "string",
+          "enum": [
+            "WebSite",
+            "Mobile App",
+            "Web App",
+            "ATM",
+            "MFK",
+            "IVR",
+            "Other"
+          ],
+          "description": "Channel through which the enquiry originated."
+        },
+
+        "reqIssuedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Date and time when the request was issued, in ISO 8601 date-time format."
+        }
+      }
+    },
+
+    "customerId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9]{12}$",
+      "description": "Optional customer identifier containing exactly 12 alphanumeric characters."
+    },
+
+    "mobileNumber": {
+      "type": "string",
+      "pattern": "^\\+?[0-9][0-9 ()-]{5,24}$",
+      "description": "Customer mobile number. Supports international formats."
+    },
+
+    "firstName": {
+      "type": "string",
+      "maxLength": 35,
+      "description": "Customer first name."
+    },
+
+    "lastName": {
+      "type": "string",
+      "maxLength": 35,
+      "description": "Customer last name."
+    },
+
+    "emailAddress": {
+      "type": "string",
+      "format": "email",
+      "description": "Customer email address."
+    },
+
+    "message": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "description": "Customer enquiry or complaint message."
+    },
+
+    "receivedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Date and time when the enquiry was received, in ISO 8601 date-time format."
+    }
+  }
+}
