@@ -1,11 +1,14 @@
 package com.sib.triage.domain;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import com.sib.triage.support.ConsoleTestDescription;
 import java.time.Instant;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+@ExtendWith(ConsoleTestDescription.class)
 class TriageResultTest {
     private final CustomerEnquiry enquiry = new CustomerEnquiry(
             new CustomerEnquiry.Meta("e-1", "WebSite", Instant.parse("2026-08-08T11:59:00Z")),

@@ -3,12 +3,19 @@ package com.sib.triage.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.sib.triage.domain.TriageResult;
+import com.sib.triage.persistence.TriageRepository;
+import com.sib.triage.persistence.SqlServerTriageRepository;
+import com.sib.triage.domain.CustomerEnquiry;
+import com.sib.triage.ai.AiClassification;
+import com.sib.triage.support.ConsoleTestDescription;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.Test;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.jupiter.api.Assertions.*;
 
+@ExtendWith(ConsoleTestDescription.class)
 class TriagePipelineTest {
     @Test void publishesAiResponseWithCorrelationId() {
         var mapper = new ObjectMapper().registerModule(new JavaTimeModule());
@@ -17,7 +24,7 @@ class TriagePipelineTest {
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
             var pipeline = new TriagePipeline(mapper, new EnquirySchemaValidator(),
                     (enquiry, correlation) -> CompletableFuture.completedFuture(new TriageResult("TEST", enquiry)),
-                    (enquiry, triage, correlation) -> {},
+                    repository(),
                     (triage, correlation) -> {
                         publishedCorrelation.set(correlation);
                         publishedResult.set(triage);
@@ -39,7 +46,7 @@ class TriagePipelineTest {
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
             var pipeline = new TriagePipeline(new ObjectMapper(), new EnquirySchemaValidator(),
                     (e, c) -> CompletableFuture.failedFuture(new AssertionError()),
-                    (e, r, c) -> {}, (r, c) -> fail("Invalid requests must not be published"), executor);
+                    repository(), (r, c) -> fail("Invalid requests must not be published"), executor);
             assertThrows(Exception.class, () -> pipeline.process("{}", "corr").toCompletableFuture().join());
         }
     }
@@ -49,7 +56,7 @@ class TriagePipelineTest {
             var pipeline = new TriagePipeline(new ObjectMapper().registerModule(new JavaTimeModule()),
                     new EnquirySchemaValidator(),
                     (e, c) -> CompletableFuture.failedFuture(new AssertionError()),
-                    (e, r, c) -> {}, (r, c) -> fail("Invalid requests must not be published"), executor);
+                    repository(), (r, c) -> fail("Invalid requests must not be published"), executor);
             var invalid = """
                     {"meta":{"refNumber":"e-1","channel":"WebSite","reqIssuedAt":"not-a-date"},
                      "mobileNumber":"+971501234567","firstName":"Sara","lastName":"Khan",
@@ -67,7 +74,7 @@ class TriagePipelineTest {
             var pipeline = new TriagePipeline(new ObjectMapper().registerModule(new JavaTimeModule()),
                     new EnquirySchemaValidator(),
                     (e, c) -> CompletableFuture.failedFuture(new IllegalStateException("AI unavailable")),
-                    (e, r, c) -> {}, (r, c) -> published.set(true), executor);
+                    repository(), (r, c) -> published.set(true), executor);
 
             assertThrows(Exception.class, () -> pipeline.process(validPayload(), "corr").toCompletableFuture().join());
         }
@@ -79,11 +86,50 @@ class TriagePipelineTest {
             var pipeline = new TriagePipeline(new ObjectMapper().registerModule(new JavaTimeModule()),
                     new EnquirySchemaValidator(),
                     (e, c) -> CompletableFuture.completedFuture(new TriageResult("response", e)),
-                    (e, r, c) -> {},
+                    repository(),
                     (r, c) -> { throw new IllegalStateException("MQ result queue unavailable"); }, executor);
 
             assertThrows(Exception.class, () -> pipeline.process(validPayload(), "corr").toCompletableFuture().join());
         }
+    }
+
+    @Test void persistenceFailureStopsAiProcessing() {
+        var aiInvoked = new java.util.concurrent.atomic.AtomicBoolean();
+        var repository = new TriageRepository() {
+            @Override public void registerRequest(CustomerEnquiry e, String c) {
+                throw new SqlServerTriageRepository.PersistenceException("constraint violation");
+            }
+            @Override public void updateSuccess(String r, AiClassification a, String c) { }
+            @Override public void updateFailure(String r, String e, String raw, String c) { }
+        };
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var pipeline = new TriagePipeline(new ObjectMapper().registerModule(new JavaTimeModule()),
+                    new EnquirySchemaValidator(), (e, c) -> {
+                        aiInvoked.set(true);
+                        return CompletableFuture.completedFuture(new TriageResult("response", e));
+                    }, repository, (r, c) -> fail("Must not publish"), executor);
+            assertThrows(Exception.class, () -> pipeline.process(validPayload(), "corr").toCompletableFuture().join());
+        }
+        assertFalse(aiInvoked.get());
+    }
+
+    @Test void aiFailureIsPersistedBeforePropagation() {
+        var persistedError = new AtomicReference<String>();
+        var repository = new TriageRepository() {
+            @Override public void registerRequest(CustomerEnquiry e, String c) { }
+            @Override public void updateSuccess(String r, AiClassification a, String c) { }
+            @Override public void updateFailure(String ref, String error, String raw, String correlation) {
+                persistedError.set(error);
+            }
+        };
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var pipeline = new TriagePipeline(new ObjectMapper().registerModule(new JavaTimeModule()),
+                    new EnquirySchemaValidator(),
+                    (e, c) -> CompletableFuture.failedFuture(new IllegalStateException("AI unavailable")),
+                    repository, (r, c) -> fail("Must not publish"), executor);
+            assertThrows(Exception.class, () -> pipeline.process(validPayload(), "corr").toCompletableFuture().join());
+        }
+        assertEquals("AI unavailable", persistedError.get());
     }
 
     private static String validPayload() {
@@ -93,5 +139,13 @@ class TriagePipelineTest {
                  "firstName":"Sara","lastName":"Khan","emailAddress":"sara@example.com",
                  "message":"My card is missing","receivedAt":"2026-08-08T12:00:00Z"}
                 """;
+    }
+
+    private static TriageRepository repository() {
+        return new TriageRepository() {
+            @Override public void registerRequest(CustomerEnquiry e, String c) { }
+            @Override public void updateSuccess(String r, AiClassification a, String c) { }
+            @Override public void updateFailure(String r, String e, String raw, String c) { }
+        };
     }
 }

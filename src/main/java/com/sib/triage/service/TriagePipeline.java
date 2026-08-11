@@ -2,21 +2,21 @@ package com.sib.triage.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sib.triage.ai.TriageClassifier;
+import com.sib.triage.ai.AiHttpClassifier;
 import com.sib.triage.domain.CustomerEnquiry;
 import com.sib.triage.messaging.TriageResultPublisher;
 import com.sib.triage.persistence.TriageRepository;
+import com.sib.triage.persistence.SqlServerTriageRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
-import java.util.concurrent.CompletionStage;
-import java.util.concurrent.Executor;
+import java.util.concurrent.*;
 
 public final class TriagePipeline {
     private static final Logger LOGGER = LoggerFactory.getLogger(TriagePipeline.class);
     private final ObjectMapper mapper;
     private final EnquirySchemaValidator schemaValidator;
     private final TriageClassifier classifier;
-    @SuppressWarnings("unused")
     private final TriageRepository repository;
     private final TriageResultPublisher resultPublisher;
     private final Executor executor;
@@ -52,12 +52,34 @@ public final class TriagePipeline {
         try {
             schemaValidator.validate(json);
             var enquiry = mapper.readValue(json, CustomerEnquiry.class);
-            LOGGER.info("Enquiry received enquiryId={}", enquiry.enquiryId());
-            return classifier.classify(enquiry, correlationId)
-                    .thenCompose(result -> java.util.concurrent.CompletableFuture.runAsync(
-                            () -> withCorrelation(correlationId, () -> resultPublisher.publish(result, correlationId)),
-                            executor
-                        ))
+            LOGGER.info("Customer enquiry received referenceNumber={}", enquiry.enquiryId());
+            // Registration is deliberately the first asynchronous stage: an enquiry
+            // that cannot be audited must never reach the external AI endpoint.
+            return CompletableFuture.runAsync(() -> withCorrelation(correlationId,
+                            () -> repository.registerRequest(enquiry, correlationId)), executor)
+                    .thenCompose(ignored -> classifier.classifyDetailed(enquiry, correlationId))
+                    .handle((classification, error) -> {
+                        if (error == null) return CompletableFuture.runAsync(() -> withCorrelation(correlationId, () -> {
+                            repository.updateSuccess(enquiry.enquiryId(), classification, correlationId);
+                            LOGGER.info("AI processing completed referenceNumber={} status=SUCCESS totalTokens={}",
+                                    enquiry.enquiryId(), classification.totalTokens());
+                            resultPublisher.publish(classification.result(), correlationId);
+                        }), executor);
+                        var cause = unwrap(error);
+                        // A registration failure has no reliable tracker row to update.
+                        // Preserve its type so the MQ consumer can route the original body.
+                        if (cause instanceof SqlServerTriageRepository.PersistenceException)
+                            return CompletableFuture.<Void>failedFuture(cause);
+                        var rawResponse = cause instanceof AiHttpClassifier.AiServiceException ai
+                                ? ai.rawJsonResponse() : null;
+                        // Persist FAILURE before propagating the AI exception. Downstream
+                        // result publication is therefore skipped while the audit remains.
+                        return CompletableFuture.runAsync(() -> withCorrelation(correlationId, () -> {
+                            repository.updateFailure(enquiry.enquiryId(), cause.getMessage(), rawResponse, correlationId);
+                            LOGGER.error("AI processing failed referenceNumber={} error={}", enquiry.enquiryId(), cause.getMessage());
+                            throw new CompletionException(cause);
+                        }), executor);
+                    }).thenCompose(stage -> stage)
                     .whenComplete((ignored, error) -> withCorrelation(correlationId, () -> {
                         if (error == null)
                             LOGGER.info("Enquiry processing completed enquiryId={}", enquiry.enquiryId());
@@ -68,6 +90,12 @@ public final class TriagePipeline {
             return java.util.concurrent.CompletableFuture
                     .failedFuture(new InvalidEnquiryException("Invalid enquiry payload", e));
         }
+    }
+
+    private static Throwable unwrap(Throwable error) {
+        while ((error instanceof CompletionException || error instanceof ExecutionException)
+                && error.getCause() != null) error = error.getCause();
+        return error;
     }
 
     private static void withCorrelation(String correlationId, Runnable action) {

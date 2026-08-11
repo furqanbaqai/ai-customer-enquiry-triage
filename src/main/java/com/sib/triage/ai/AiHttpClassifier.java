@@ -60,10 +60,15 @@ public final class AiHttpClassifier implements TriageClassifier {
 
     @Override
     public CompletionStage<TriageResult> classify(CustomerEnquiry enquiry, String correlationId) {
+        return invoke(enquiry, correlationId).thenApply(AiClassification::result);
+    }
+
+    @Override
+    public CompletionStage<AiClassification> classifyDetailed(CustomerEnquiry enquiry, String correlationId) {
         return invoke(enquiry, correlationId);
     }
 
-    private CompletionStage<TriageResult> invoke(CustomerEnquiry enquiry, String correlationId) {
+    private CompletionStage<AiClassification> invoke(CustomerEnquiry enquiry, String correlationId) {
         try {
             // Replace placeholder in prompt with incoming message content
             var prompt = PROMPT_TEMPLATE.replace("{INCOMING_TEXT}", enquiry.message() == null ? "" : enquiry.message());
@@ -88,11 +93,14 @@ public final class AiHttpClassifier implements TriageClassifier {
                     .POST(HttpRequest.BodyPublishers.ofString(body)).build();
             return client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).thenApply(response -> {
                 if (response.statusCode() < 200 || response.statusCode() >= 300)
-                    throw new AiServiceException("AI service returned HTTP " + response.statusCode());
+                    // Retain a valid error document for tracker auditing without ever
+                    // storing HTML/text error bodies in the JSON-constrained column.
+                    throw new AiServiceException("AI service returned HTTP " + response.statusCode(),
+                            validJsonOrNull(response.body()));
                 try {
                     return parseResponse(response.body(), enquiry);
                 } catch (Exception e) {
-                    throw new AiServiceException("Invalid AI response", e);
+                    throw new AiServiceException("Invalid AI response", e, validJsonOrNull(response.body()));
                 }
             });
         } catch (Exception e) {
@@ -101,7 +109,7 @@ public final class AiHttpClassifier implements TriageClassifier {
         }
     }
 
-    TriageResult parseResponse(String responseBody, CustomerEnquiry customerEnquiry) throws IOException {
+    AiClassification parseResponse(String responseBody, CustomerEnquiry customerEnquiry) throws IOException {
         var response = mapper.readTree(responseBody);
         var choices = response.path("choices");
         if (!choices.isArray() || choices.isEmpty()) {
@@ -113,16 +121,41 @@ public final class AiHttpClassifier implements TriageClassifier {
             throw new IOException("AI response does not contain message content");
         }
 
-        return new TriageResult(content.textValue(), customerEnquiry);
+        var id = response.path("id").isTextual() ? response.path("id").textValue() : null;
+        var totalTokensNode = response.path("usage").path("total_tokens");
+        var totalTokens = totalTokensNode.canConvertToInt() ? totalTokensNode.intValue() : null;
+        var timings = response.path("timings");
+        // Keep the exact response body alongside mapped fields. Re-serializing this
+        // DTO would lose formatting and any provider-specific fields needed for audit.
+        return new AiClassification(new TriageResult(content.textValue(), customerEnquiry), id, totalTokens,
+                timings.isMissingNode() || timings.isNull() ? null : timings, responseBody);
+    }
+
+    private String validJsonOrNull(String body) {
+        if (body == null || body.isBlank()) return null;
+        try {
+            var json = mapper.readTree(body);
+            return json != null && json.isContainerNode() ? body : null;
+        }
+        catch (IOException ignored) { return null; }
     }
 
     public static final class AiServiceException extends RuntimeException {
+        private final String rawJsonResponse;
         public AiServiceException(String message) {
-            super(message);
+            this(message, null, null);
+        }
+        public AiServiceException(String message, String rawJsonResponse) {
+            this(message, null, rawJsonResponse);
         }
 
         public AiServiceException(String message, Throwable cause) {
-            super(message, cause);
+            this(message, cause, null);
         }
+        private AiServiceException(String message, Throwable cause, String rawJsonResponse) {
+            super(message, cause);
+            this.rawJsonResponse = rawJsonResponse;
+        }
+        public String rawJsonResponse() { return rawJsonResponse; }
     }
 }

@@ -6,10 +6,13 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.sib.triage.domain.CustomerEnquiry;
 import com.sib.triage.domain.TriageResult;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import com.sib.triage.support.ConsoleTestDescription;
 import java.time.Instant;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+@ExtendWith(ConsoleTestDescription.class)
 class MqTriageResultPublisherTest {
     @Test void serializesContentAndCustomerEnquiryForResultQueue() throws Exception {
         var mapper = new ObjectMapper().registerModule(new JavaTimeModule())

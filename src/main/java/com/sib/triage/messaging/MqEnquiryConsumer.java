@@ -4,6 +4,7 @@ import com.ibm.mq.jakarta.jms.MQConnectionFactory;
 import com.ibm.msg.client.jakarta.wmq.WMQConstants;
 import com.sib.triage.config.AppConfig;
 import com.sib.triage.service.TriagePipeline;
+import com.sib.triage.persistence.SqlServerTriageRepository;
 import jakarta.jms.JMSConsumer;
 import jakarta.jms.JMSContext;
 import jakarta.jms.JMSException;
@@ -68,7 +69,7 @@ public final class MqEnquiryConsumer implements AutoCloseable {
     private void dispatch(String payload, String correlationId) {
         try {
             pipeline.process(payload, correlationId).whenComplete((ignored, error) -> {
-                if (isInvalidEnquiry(error)) sendToBackout(payload, correlationId, error);
+                if (requiresBackout(error)) sendToBackout(payload, correlationId, error);
             });
         } catch (Exception e) {
             LOGGER.error("Unable to dispatch MQ message correlationId={}", correlationId, e);
@@ -78,15 +79,18 @@ public final class MqEnquiryConsumer implements AutoCloseable {
     private synchronized void sendToBackout(String payload, String correlationId, Throwable cause) {
         try {
             backoutProducer.setJMSCorrelationID(correlationId).send(backoutQueue, payload);
-            LOGGER.warn("Invalid enquiry moved to backout queue correlationId={}", correlationId, cause);
+            LOGGER.warn("Failed enquiry moved to backout queue correlationId={}", correlationId, cause);
         } catch (RuntimeException e) {
-            LOGGER.error("Unable to move invalid enquiry to backout queue correlationId={}", correlationId, e);
+            LOGGER.error("Unable to move failed enquiry to backout queue correlationId={}", correlationId, e);
         }
     }
 
-    private static boolean isInvalidEnquiry(Throwable error) {
+    private static boolean requiresBackout(Throwable error) {
+        // Walk CompletionStage wrappers so only validation/persistence failures are
+        // copied to backout; ordinary AI failures remain recorded in the tracker.
         while (error != null) {
-            if (error instanceof TriagePipeline.InvalidEnquiryException) return true;
+            if (error instanceof TriagePipeline.InvalidEnquiryException
+                    || error instanceof SqlServerTriageRepository.PersistenceException) return true;
             error = error.getCause();
         }
         return false;

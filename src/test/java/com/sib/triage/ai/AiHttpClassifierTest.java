@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sib.triage.config.AppConfig;
 import com.sib.triage.domain.CustomerEnquiry;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import com.sib.triage.support.ConsoleTestDescription;
 import java.net.http.HttpClient;
 import java.time.Duration;
 import java.time.Instant;
@@ -11,6 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+@ExtendWith(ConsoleTestDescription.class)
 class AiHttpClassifierTest {
     private final CustomerEnquiry enquiry = new CustomerEnquiry(
             new CustomerEnquiry.Meta("e-1", "WebSite", Instant.parse("2026-08-08T11:59:00Z")),
@@ -35,8 +38,8 @@ class AiHttpClassifierTest {
                 }
                 """, enquiry);
         assertEquals("{\"category\":\"Card Fraud/Errors\",\"subcategory\":\"Duplicate Charges\"}",
-                result.content());
-        assertSame(enquiry, result.customerEnquiry());
+                result.result().content());
+        assertSame(enquiry, result.result().customerEnquiry());
     }
 
     @Test void rejectsMissingChoices() {
@@ -47,13 +50,31 @@ class AiHttpClassifierTest {
         var result = classifier.parseResponse("""
                 {"choices":[{"message":{"content":"not-json"}}]}
                 """, enquiry);
-        assertEquals("not-json", result.content());
-        assertSame(enquiry, result.customerEnquiry());
+        assertEquals("not-json", result.result().content());
+        assertSame(enquiry, result.result().customerEnquiry());
     }
 
     @Test void rejectsBlankMessageContent() {
         assertThrows(Exception.class, () -> classifier.parseResponse("""
                 {"choices":[{"message":{"content":"   "}}]}
                 """, enquiry));
+    }
+
+    @Test void preservesRawResponseAndMapsAuditMetadata() throws Exception {
+        var raw = """
+                {"id":"cmpl-abc123","choices":[{"message":{"content":"ok"}}],
+                 "usage":{"total_tokens":780},"timings":{"prompt_n":700,"predicted_ms":12000.5}}
+                """;
+        var result = classifier.parseResponse(raw, enquiry);
+        assertEquals("cmpl-abc123", result.id());
+        assertEquals(780, result.totalTokens());
+        assertEquals(700, result.timings().path("prompt_n").intValue());
+        assertEquals(raw, result.rawResponse());
+    }
+
+    @Test void missingUsageAndTimingsRemainNull() throws Exception {
+        var result = classifier.parseResponse("{\"choices\":[{\"message\":{\"content\":\"ok\"}}]}", enquiry);
+        assertEquals(null, result.totalTokens());
+        assertEquals(null, result.timings());
     }
 }

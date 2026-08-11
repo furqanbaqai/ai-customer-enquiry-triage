@@ -2,11 +2,14 @@ package com.sib.triage.config;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.api.extension.ExtendWith;
+import com.sib.triage.support.ConsoleTestDescription;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
 
+@ExtendWith(ConsoleTestDescription.class)
 class AppConfigTest {
     @TempDir Path directory;
 

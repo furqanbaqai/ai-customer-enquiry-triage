@@ -1,9 +1,10 @@
 package com.sib.triage.persistence;
 
 import com.sib.triage.domain.CustomerEnquiry;
-import com.sib.triage.domain.TriageResult;
+import com.sib.triage.ai.AiClassification;
 
-@FunctionalInterface
 public interface TriageRepository {
-    void save(CustomerEnquiry enquiry, TriageResult result, String correlationId);
+    void registerRequest(CustomerEnquiry enquiry, String correlationId);
+    void updateSuccess(String referenceNumber, AiClassification result, String correlationId);
+    void updateFailure(String referenceNumber, String errorMessage, String rawAiResponse, String correlationId);
 }

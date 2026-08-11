@@ -31,7 +31,7 @@ public final class TriageApplication {
         var httpClient = HttpClient.newBuilder().executor(executor).version(HttpClient.Version.HTTP_2).build();
         var dataSource = dataSource(config.database());
         var classifier = new AiHttpClassifier(httpClient, mapper, config.ai());
-        var repository = new SqlServerTriageRepository(dataSource);
+        var repository = new SqlServerTriageRepository(dataSource, mapper);
         var resultPublisher = new MqTriageResultPublisher(config.mq(), mapper);
         var pipeline = new TriagePipeline(mapper, new EnquirySchemaValidator(), classifier, repository,
                 resultPublisher, executor);

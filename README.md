@@ -96,6 +96,26 @@ sqlcmd -S localhost,1433 -d triage -U triage_app -P "<password>" -i src/main/res
 
 The application does not automatically apply schema migrations. The script must be applied before the first message is processed.
 
+### Tracker lifecycle
+
+Each valid request is atomically registered in `customer_enquiry_triage_tracker` before AI processing:
+
+```text
+RECEIVED
+   |
+   v
+AI processing
+   |
+   +---- SUCCESS
+   |
+   +---- FAILURE
+```
+
+`referenceNumber` is the request's `meta.refNumber`; `processingCount` starts at one and is incremented
+when the same reference is received again. AI completion records `totalTokens`, `genAiId`, serialized
+`timingJson`, and the complete valid raw response in `aiResponseJson`. Every duplicate or state change
+refreshes `recUpdatedAt` using SQL Server UTC time.
+
 ## IBM MQ setup
 
 The queues configured by `MQ_QUEUE_NAME`, `MQ_BACKOUT_QUEUE_NAME`, and `MQ_RESULT_QUEUE_NAME` must exist before startup. Their default names are:
@@ -173,7 +193,10 @@ The following schema constraints are enforced before AI classification:
 
 Set `JMSCorrelationID` on the message when possible. If it is absent, the service uses `JMSMessageID`; if both are absent, it generates a UUID. The ID is forwarded to the AI API as `X-Correlation-ID` and stored in SQL Server.
 
-If the body is malformed JSON, cannot be deserialized, or fails schema validation, the original JSON body is sent to `MQ_BACKOUT_QUEUE_NAME` with the same correlation ID. AI endpoint and database failures are logged as processing failures and are not routed to the backout queue.
+If the body is malformed JSON, cannot be deserialized, fails schema validation, or cannot be persisted,
+the original body is sent once to `MQ_BACKOUT_QUEUE_NAME` with the same correlation ID. AI processing is
+not started after initial persistence failure. AI endpoint failures are recorded as `FAILURE` and do not
+produce a result message.
 
 ### AI service response
 
