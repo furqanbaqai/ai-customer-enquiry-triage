@@ -90,7 +90,7 @@ public final class AiHttpClassifier implements TriageClassifier {
                 if (response.statusCode() < 200 || response.statusCode() >= 300)
                     throw new AiServiceException("AI service returned HTTP " + response.statusCode());
                 try {
-                    return parseResponse(response.body());
+                    return parseResponse(response.body(), enquiry);
                 } catch (Exception e) {
                     throw new AiServiceException("Invalid AI response", e);
                 }
@@ -101,7 +101,7 @@ public final class AiHttpClassifier implements TriageClassifier {
         }
     }
 
-    TriageResult parseResponse(String responseBody) throws IOException {
+    TriageResult parseResponse(String responseBody, CustomerEnquiry customerEnquiry) throws IOException {
         var response = mapper.readTree(responseBody);
         var choices = response.path("choices");
         if (!choices.isArray() || choices.isEmpty()) {
@@ -113,7 +113,7 @@ public final class AiHttpClassifier implements TriageClassifier {
             throw new IOException("AI response does not contain message content");
         }
 
-        return new TriageResult(content.textValue());
+        return new TriageResult(content.textValue(), customerEnquiry);
     }
 
     public static final class AiServiceException extends RuntimeException {

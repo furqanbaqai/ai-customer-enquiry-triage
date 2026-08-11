@@ -1,6 +1,7 @@
 package com.sib.triage;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.sib.triage.ai.AiHttpClassifier;
 import com.sib.triage.config.AppConfig;
@@ -25,12 +26,13 @@ public final class TriageApplication {
         displayStartupBanner();
         var config = AppConfig.load();
         var executor = Executors.newVirtualThreadPerTaskExecutor();
-        var mapper = new ObjectMapper().registerModule(new JavaTimeModule());
+        var mapper = new ObjectMapper().registerModule(new JavaTimeModule())
+                .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
         var httpClient = HttpClient.newBuilder().executor(executor).version(HttpClient.Version.HTTP_2).build();
         var dataSource = dataSource(config.database());
         var classifier = new AiHttpClassifier(httpClient, mapper, config.ai());
         var repository = new SqlServerTriageRepository(dataSource);
-        var resultPublisher = new MqTriageResultPublisher(config.mq());
+        var resultPublisher = new MqTriageResultPublisher(config.mq(), mapper);
         var pipeline = new TriagePipeline(mapper, new EnquirySchemaValidator(), classifier, repository,
                 resultPublisher, executor);
         var consumer = new MqEnquiryConsumer(config.mq(), pipeline, executor);

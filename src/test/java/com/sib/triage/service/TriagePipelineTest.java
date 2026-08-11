@@ -12,12 +12,11 @@ import static org.junit.jupiter.api.Assertions.*;
 class TriagePipelineTest {
     @Test void publishesAiResponseWithCorrelationId() {
         var mapper = new ObjectMapper().registerModule(new JavaTimeModule());
-        var result = new TriageResult("TEST");
         var publishedCorrelation = new AtomicReference<String>();
         var publishedResult = new AtomicReference<TriageResult>();
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
             var pipeline = new TriagePipeline(mapper, new EnquirySchemaValidator(),
-                    (enquiry, correlation) -> CompletableFuture.completedFuture(result),
+                    (enquiry, correlation) -> CompletableFuture.completedFuture(new TriageResult("TEST", enquiry)),
                     (enquiry, triage, correlation) -> {},
                     (triage, correlation) -> {
                         publishedCorrelation.set(correlation);
@@ -32,7 +31,8 @@ class TriagePipelineTest {
                     """, "corr-123").toCompletableFuture().join();
         }
         assertEquals("corr-123", publishedCorrelation.get());
-        assertSame(result, publishedResult.get());
+        assertEquals("TEST", publishedResult.get().content());
+        assertEquals("e-1", publishedResult.get().customerEnquiry().enquiryId());
     }
 
     @Test void rejectsMalformedPayload() {
@@ -78,7 +78,7 @@ class TriagePipelineTest {
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
             var pipeline = new TriagePipeline(new ObjectMapper().registerModule(new JavaTimeModule()),
                     new EnquirySchemaValidator(),
-                    (e, c) -> CompletableFuture.completedFuture(new TriageResult("response")),
+                    (e, c) -> CompletableFuture.completedFuture(new TriageResult("response", e)),
                     (e, r, c) -> {},
                     (r, c) -> { throw new IllegalStateException("MQ result queue unavailable"); }, executor);
 

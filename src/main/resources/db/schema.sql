@@ -1,13 +1,30 @@
-CREATE TABLE customer_enquiry_triage (
-    enquiry_id NVARCHAR(100) NOT NULL PRIMARY KEY,
-    correlation_id NVARCHAR(100) NOT NULL,
-    customer_id NVARCHAR(100) NOT NULL,
-    message_text NVARCHAR(MAX) NOT NULL,
-    received_at DATETIME2 NOT NULL,
-    intent NVARCHAR(100) NOT NULL,
-    urgency_score INT NOT NULL,
-    sentiment NVARCHAR(50) NOT NULL,
-    recommended_team NVARCHAR(100) NOT NULL,
-    rationale NVARCHAR(1000) NULL,
-    classified_at DATETIME2 NOT NULL
+DROP TABLE IF EXISTS customer_enquiry_triage_tracker;
+GO
+
+CREATE TABLE customer_enquiry_triage_tracker
+(
+    referenceNumber   NVARCHAR(36)  NOT NULL PRIMARY KEY,
+    channel           NVARCHAR(16)  NOT NULL,
+    reqIssuedAt       DATETIME2(3)  NOT NULL,
+    processingStatus  NVARCHAR(16)  NOT NULL,
+    lastErrorMssg     NVARCHAR(128) NULL,
+    processingCount   INT           NOT NULL DEFAULT 0,
+    totalTokens       INT           NULL,
+    genAiId           NVARCHAR(35)  NULL,
+    timingJson        NVARCHAR(MAX) NULL,
+    aiResponseJson    NVARCHAR(MAX) NULL,
+    recCreatedAt      DATETIME2(3)  NOT NULL DEFAULT SYSUTCDATETIME(),
+    recUpdatedAt      DATETIME2(3)  NOT NULL DEFAULT SYSUTCDATETIME(),
+
+    CONSTRAINT CK_customer_enquiry_triage_tracker_timingJson
+        CHECK (
+            timingJson IS NULL
+            OR ISJSON(timingJson) = 1
+        ),
+    CONSTRAINT CK_customer_enquiry_triage_tracker_aiResponseJson
+        CHECK (
+            aiResponseJson IS NULL
+            OR ISJSON(aiResponseJson) = 1
+        )
 );
+GO

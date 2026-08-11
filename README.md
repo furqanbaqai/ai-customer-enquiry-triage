@@ -199,12 +199,28 @@ The endpoint configured by `AI_API_URL` must return a successful OpenAI-compatib
 
 ### Outgoing IBM MQ result message
 
-After a successful AI call, the service sends `choices[0].message.content` unchanged to the queue configured by `MQ_RESULT_QUEUE_NAME`. The result is sent as a JMS text message and uses the same `JMSCorrelationID` selected for the incoming request.
+After a successful AI call, the service sends a JSON `TriageResult` to the queue configured by `MQ_RESULT_QUEUE_NAME`. The result contains the unchanged `choices[0].message.content` value and the original customer enquiry. It is sent as a JMS text message and uses the same `JMSCorrelationID` selected for the incoming request.
 
 For the AI response above, the result queue receives:
 
 ```json
-{"category":"Card Fraud/Errors","subcategory":"Duplicate Charges"}
+{
+  "content": "{\"category\":\"Card Fraud/Errors\",\"subcategory\":\"Duplicate Charges\"}",
+  "customerEnquiry": {
+    "meta": {
+      "refNumber": "ENQ-2026-0001",
+      "channel": "WebSite",
+      "reqIssuedAt": "2026-08-08T11:59:30Z"
+    },
+    "customerId": "ABCDEF123456",
+    "mobileNumber": "+971 50 123 4567",
+    "firstName": "Sara",
+    "lastName": "Khan",
+    "emailAddress": "sara.khan@example.com",
+    "message": "My card is missing and I can see an unknown transaction.",
+    "receivedAt": "2026-08-08T12:00:00Z"
+  }
+}
 ```
 
 Schema-invalid requests and failed AI calls do not produce a result message. A failure while putting the response on the result queue fails that enquiry's processing and is logged.

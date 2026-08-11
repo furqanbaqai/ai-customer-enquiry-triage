@@ -2,6 +2,8 @@ package com.sib.triage.messaging;
 
 import com.ibm.mq.jakarta.jms.MQConnectionFactory;
 import com.ibm.msg.client.jakarta.wmq.WMQConstants;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sib.triage.config.AppConfig;
 import com.sib.triage.domain.TriageResult;
 import jakarta.jms.JMSContext;
@@ -13,8 +15,10 @@ public final class MqTriageResultPublisher implements TriageResultPublisher, Aut
     private final JMSContext context;
     private final JMSProducer producer;
     private final Queue resultQueue;
+    private final ObjectMapper mapper;
 
-    public MqTriageResultPublisher(AppConfig.Mq config) {
+    public MqTriageResultPublisher(AppConfig.Mq config, ObjectMapper mapper) {
+        this.mapper = mapper;
         try {
             var factory = connectionFactory(config);
             context = config.username().isBlank()
@@ -29,7 +33,15 @@ public final class MqTriageResultPublisher implements TriageResultPublisher, Aut
 
     @Override
     public synchronized void publish(TriageResult result, String correlationId) {
-        producer.setJMSCorrelationID(correlationId).send(resultQueue, result.content());
+        producer.setJMSCorrelationID(correlationId).send(resultQueue, serialize(mapper, result));
+    }
+
+    static String serialize(ObjectMapper mapper, TriageResult result) {
+        try {
+            return mapper.writeValueAsString(result);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("Unable to serialize triage result", e);
+        }
     }
 
     private static MQConnectionFactory connectionFactory(AppConfig.Mq config) throws JMSException {
