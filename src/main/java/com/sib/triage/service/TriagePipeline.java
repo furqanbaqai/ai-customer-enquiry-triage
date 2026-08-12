@@ -72,7 +72,7 @@ public final class TriagePipeline {
             // Registration is deliberately the first asynchronous stage: an enquiry
             // that cannot be audited must never reach the external AI endpoint.
             return CompletableFuture.runAsync(() -> withCorrelation(correlationId,
-                            () -> repository.registerRequest(enquiry, correlationId)), executor)
+                            () -> repository.registerRequest(enquiry, json, correlationId)), executor)
                     .thenCompose(ignored -> classifier.classifyDetailed(enquiry, correlationId))
                     .handle((classification, error) -> {
                         if (error == null) return CompletableFuture.runAsync(() -> withCorrelation(correlationId, () -> {

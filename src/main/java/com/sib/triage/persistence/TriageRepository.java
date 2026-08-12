@@ -16,7 +16,7 @@ public interface TriageRepository {
      * @param enquiry inbound customer request to be tracked
      * @param correlationId operation identifier for logs and audit tracing
      */
-    void registerRequest(CustomerEnquiry enquiry, String correlationId);
+    void registerRequest(CustomerEnquiry enquiry, String requestJson, String correlationId);
 
     /**
      * Persists the successful AI classification path and stores provider metadata in the tracker.

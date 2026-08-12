@@ -21,6 +21,24 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 @ExtendWith(ConsoleTestDescription.class)
 class TriagePipelineTest {
+    @Test void passesOriginalJsonUnchangedToRepository() {
+        var raw = validPayload() + "  \n";
+        var captured = new AtomicReference<String>();
+        var repository = new TriageRepository() {
+            @Override public void registerRequest(CustomerEnquiry e, String json, String c) { captured.set(json); }
+            @Override public void updateSuccess(String r, AiClassification a, String c) { }
+            @Override public void updateFailure(String r, String e, String response, String c) { }
+        };
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var pipeline = new TriagePipeline(new ObjectMapper().registerModule(new JavaTimeModule()),
+                    new EnquirySchemaValidator(),
+                    (e, c) -> CompletableFuture.completedFuture(new TriageResult("ok", e)), repository,
+                    (r, c) -> { }, executor);
+            pipeline.process(raw, "corr").toCompletableFuture().join();
+        }
+        assertSame(raw, captured.get());
+    }
+
     @Test void publishesAiResponseWithCorrelationId() {
         var mapper = new ObjectMapper().registerModule(new JavaTimeModule());
         var publishedCorrelation = new AtomicReference<String>();
@@ -100,7 +118,7 @@ class TriagePipelineTest {
     @Test void persistenceFailureStopsAiProcessing() {
         var aiInvoked = new java.util.concurrent.atomic.AtomicBoolean();
         var repository = new TriageRepository() {
-            @Override public void registerRequest(CustomerEnquiry e, String c) {
+            @Override public void registerRequest(CustomerEnquiry e, String json, String c) {
                 throw new SqlServerTriageRepository.PersistenceException("constraint violation");
             }
             @Override public void updateSuccess(String r, AiClassification a, String c) { }
@@ -120,7 +138,7 @@ class TriagePipelineTest {
     @Test void aiFailureIsPersistedBeforePropagation() {
         var persistedError = new AtomicReference<String>();
         var repository = new TriageRepository() {
-            @Override public void registerRequest(CustomerEnquiry e, String c) { }
+            @Override public void registerRequest(CustomerEnquiry e, String json, String c) { }
             @Override public void updateSuccess(String r, AiClassification a, String c) { }
             @Override public void updateFailure(String ref, String error, String raw, String correlation) {
                 persistedError.set(error);
@@ -147,7 +165,7 @@ class TriagePipelineTest {
 
     private static TriageRepository repository() {
         return new TriageRepository() {
-            @Override public void registerRequest(CustomerEnquiry e, String c) { }
+            @Override public void registerRequest(CustomerEnquiry e, String json, String c) { }
             @Override public void updateSuccess(String r, AiClassification a, String c) { }
             @Override public void updateFailure(String r, String e, String raw, String c) { }
         };
