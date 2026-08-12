@@ -11,6 +11,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Orchestrates the end-to-end customer-enquiry triage workflow.
@@ -68,6 +69,7 @@ public final class TriagePipeline {
         try {
             schemaValidator.validate(json);
             var enquiry = mapper.readValue(json, CustomerEnquiry.class);
+            var historyRecorded = new AtomicBoolean();
             LOGGER.info("Customer enquiry received referenceNumber={}", enquiry.enquiryId());
             // Registration is deliberately the first asynchronous stage: an enquiry
             // that cannot be audited must never reach the external AI endpoint.
@@ -75,27 +77,18 @@ public final class TriagePipeline {
                             () -> repository.registerRequest(enquiry, json, correlationId)), executor)
                     .thenCompose(ignored -> classifier.classifyDetailed(enquiry, correlationId))
                     .handle((classification, error) -> {
-                        if (error == null) return CompletableFuture.runAsync(() -> withCorrelation(correlationId, () -> {
-                            repository.updateSuccess(enquiry.enquiryId(), classification, correlationId);
-                            LOGGER.info("AI processing completed referenceNumber={} status=SUCCESS totalTokens={}",
-                                    enquiry.enquiryId(), classification.totalTokens());
-                            resultPublisher.publish(classification.result(), correlationId);
-                        }), executor);
+                        if (error == null) return new AttemptOutcome(classification, null, null);
                         var cause = unwrap(error);
                         // A registration failure has no reliable tracker row to update.
                         // Preserve its type so the MQ consumer can route the original body.
                         if (cause instanceof SqlServerTriageRepository.PersistenceException)
-                            return CompletableFuture.<Void>failedFuture(cause);
+                            throw new CompletionException(cause);
                         var rawResponse = cause instanceof AiHttpClassifier.AiServiceException ai
                                 ? ai.rawJsonResponse() : null;
-                        // Persist FAILURE before propagating the AI exception. Downstream
-                        // result publication is therefore skipped while the audit remains.
-                        return CompletableFuture.runAsync(() -> withCorrelation(correlationId, () -> {
-                            repository.updateFailure(enquiry.enquiryId(), cause.getMessage(), rawResponse, correlationId);
-                            LOGGER.error("AI processing failed referenceNumber={} error={}", enquiry.enquiryId(), cause.getMessage());
-                            throw new CompletionException(cause);
-                        }), executor);
-                    }).thenCompose(stage -> stage)
+                        return new AttemptOutcome(null, cause, rawResponse);
+                    })
+                    .thenCompose(outcome -> CompletableFuture.runAsync(() -> withCorrelation(correlationId, () ->
+                            persistOutcomeOnce(enquiry, outcome, correlationId, historyRecorded)), executor))
                     .whenComplete((ignored, error) -> withCorrelation(correlationId, () -> {
                         if (error == null)
                             LOGGER.info("Enquiry processing completed enquiryId={}", enquiry.enquiryId());
@@ -107,6 +100,31 @@ public final class TriagePipeline {
                     .failedFuture(new InvalidEnquiryException("Invalid enquiry payload", e));
         }
     }
+
+    /** Persists exactly one terminal AI outcome for a single invocation of {@link #process}. */
+    private void persistOutcomeOnce(CustomerEnquiry enquiry, AttemptOutcome outcome, String correlationId,
+                                    AtomicBoolean historyRecorded) {
+        if (!historyRecorded.compareAndSet(false, true)) {
+            LOGGER.warn("Duplicate terminal callback ignored referenceNumber={} correlationId={}",
+                    enquiry.enquiryId(), correlationId);
+            return;
+        }
+        if (outcome.error() == null) {
+            repository.updateSuccess(enquiry.enquiryId(), outcome.classification(), correlationId);
+            LOGGER.info("AI processing completed referenceNumber={} status=SUCCESS totalTokens={}",
+                    enquiry.enquiryId(), outcome.classification().totalTokens());
+            resultPublisher.publish(outcome.classification().result(), correlationId);
+            return;
+        }
+        repository.updateFailure(enquiry.enquiryId(), outcome.error().getMessage(),
+                outcome.rawResponse(), correlationId);
+        LOGGER.error("AI processing failed referenceNumber={} error={}",
+                enquiry.enquiryId(), outcome.error().getMessage());
+        throw new CompletionException(outcome.error());
+    }
+
+    private record AttemptOutcome(com.sib.triage.ai.AiClassification classification,
+                                  Throwable error, String rawResponse) { }
 
     /**
      * Unwraps completion exceptions so the underlying service error is reported consistently.

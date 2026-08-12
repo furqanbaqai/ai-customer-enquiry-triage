@@ -104,15 +104,28 @@ class TriagePipelineTest {
     }
 
     @Test void propagatesResultPublishingFailure() {
+        var successes = new java.util.concurrent.atomic.AtomicInteger();
+        var failures = new java.util.concurrent.atomic.AtomicInteger();
+        var repository = new TriageRepository() {
+            @Override public void registerRequest(CustomerEnquiry e, String json, String c) { }
+            @Override public void updateSuccess(String r, AiClassification a, String c) {
+                successes.incrementAndGet();
+            }
+            @Override public void updateFailure(String r, String e, String raw, String c) {
+                failures.incrementAndGet();
+            }
+        };
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
             var pipeline = new TriagePipeline(new ObjectMapper().registerModule(new JavaTimeModule()),
                     new EnquirySchemaValidator(),
                     (e, c) -> CompletableFuture.completedFuture(new TriageResult("response", e)),
-                    repository(),
+                    repository,
                     (r, c) -> { throw new IllegalStateException("MQ result queue unavailable"); }, executor);
 
             assertThrows(Exception.class, () -> pipeline.process(validPayload(), "corr").toCompletableFuture().join());
         }
+        assertEquals(1, successes.get(), "One successful execution must create one history record");
+        assertEquals(0, failures.get(), "A publisher failure must not create a second history record");
     }
 
     @Test void persistenceFailureStopsAiProcessing() {
@@ -137,11 +150,13 @@ class TriagePipelineTest {
 
     @Test void aiFailureIsPersistedBeforePropagation() {
         var persistedError = new AtomicReference<String>();
+        var failureWrites = new java.util.concurrent.atomic.AtomicInteger();
         var repository = new TriageRepository() {
             @Override public void registerRequest(CustomerEnquiry e, String json, String c) { }
             @Override public void updateSuccess(String r, AiClassification a, String c) { }
             @Override public void updateFailure(String ref, String error, String raw, String correlation) {
                 persistedError.set(error);
+                failureWrites.incrementAndGet();
             }
         };
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
@@ -152,6 +167,7 @@ class TriagePipelineTest {
             assertThrows(Exception.class, () -> pipeline.process(validPayload(), "corr").toCompletableFuture().join());
         }
         assertEquals("AI unavailable", persistedError.get());
+        assertEquals(1, failureWrites.get(), "One failed execution must create one history record");
     }
 
     private static String validPayload() {

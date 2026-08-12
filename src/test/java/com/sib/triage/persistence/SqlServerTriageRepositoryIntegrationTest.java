@@ -64,6 +64,8 @@ class SqlServerTriageRepositoryIntegrationTest {
 
     @Test void successfulAttemptsAppendCompleteHistoryRows() throws Exception {
         repository.registerRequest(enquiry(), "{\"request\":true}", "first");
+        var registeredAt = trackerUpdatedAt();
+        Thread.sleep(20);
         var raw = "{\"id\":\"ai-1\",\"providerField\":true}";
         var result = new AiClassification(new TriageResult("ok", enquiry()), "ai-1", 27,
                 new ObjectMapper().readTree("{\"elapsedMs\":5}"), raw);
@@ -85,6 +87,35 @@ class SqlServerTriageRepositoryIntegrationTest {
                 assertEquals("ai-1", query.getString("genAiId"));
                 assertEquals("{\"elapsedMs\":5}", query.getString("timingJson"));
                 assertEquals(raw, query.getString("aiResponseJson"));
+            }
+        }
+        assertTrue(trackerUpdatedAt().isAfter(registeredAt));
+    }
+
+    @Test void errorAppendsHistoryThenAdvancesTrackerTimestamp() throws Exception {
+        repository.registerRequest(enquiry(), "{\"request\":true}", "first");
+        var registeredAt = trackerUpdatedAt();
+        Thread.sleep(20);
+
+        repository.updateFailure("ref-integration", "provider unavailable",
+                "{\"error\":\"provider unavailable\"}", "failure");
+
+        try (var connection = dataSource.getConnection(); var statement = connection.prepareStatement("""
+                SELECT t.processingStatus, t.lastErrorMssg, t.recUpdatedAt,
+                       h.aiResponseJson, h.recCreatedAt
+                  FROM customer_enquiry_triage_tracker t
+                  JOIN customer_enquiry_triage_history h ON h.referenceNumber = t.referenceNumber
+                 WHERE t.referenceNumber = ?
+                """)) {
+            statement.setString(1, "ref-integration");
+            try (var query = statement.executeQuery()) {
+                assertTrue(query.next());
+                assertEquals("FAILURE", query.getString("processingStatus"));
+                assertEquals("provider unavailable", query.getString("lastErrorMssg"));
+                assertEquals("{\"error\":\"provider unavailable\"}", query.getString("aiResponseJson"));
+                assertTrue(query.getTimestamp("recUpdatedAt").toInstant().isAfter(registeredAt));
+                assertFalse(query.getTimestamp("recUpdatedAt").toInstant()
+                        .isBefore(query.getTimestamp("recCreatedAt").toInstant()));
             }
         }
     }
@@ -131,6 +162,17 @@ class SqlServerTriageRepositoryIntegrationTest {
     private void executeScript(String script) throws Exception {
         try (Connection connection = dataSource.getConnection(); var statement = connection.createStatement()) {
             for (var sql : script.split(";")) if (!sql.isBlank()) statement.execute(sql);
+        }
+    }
+
+    private Instant trackerUpdatedAt() throws Exception {
+        try (var connection = dataSource.getConnection(); var statement = connection.prepareStatement(
+                "SELECT recUpdatedAt FROM customer_enquiry_triage_tracker WHERE referenceNumber = ?")) {
+            statement.setString(1, "ref-integration");
+            try (var query = statement.executeQuery()) {
+                assertTrue(query.next());
+                return query.getTimestamp(1).toInstant();
+            }
         }
     }
 

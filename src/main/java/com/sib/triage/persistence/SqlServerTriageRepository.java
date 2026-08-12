@@ -86,8 +86,10 @@ public final class SqlServerTriageRepository implements TriageRepository {
         try {
             connection = dataSource.getConnection();
             connection.setAutoCommit(false);
-            updateTracker(connection, referenceNumber, status, error);
             insertHistory(connection, referenceNumber, tokens, genAiId, timingJson, aiResponseJson);
+            // The tracker timestamp represents the most recently persisted attempt, so update the
+            // parent only after its append-only history row has been accepted by SQL Server.
+            updateTracker(connection, referenceNumber, status, error);
             connection.commit();
         } catch (SQLException | RuntimeException e) {
             rollback(connection, referenceNumber);

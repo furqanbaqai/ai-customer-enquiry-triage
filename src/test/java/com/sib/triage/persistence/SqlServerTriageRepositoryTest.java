@@ -57,6 +57,31 @@ class SqlServerTriageRepositoryTest {
         verifyNoInteractions(dataSource);
     }
 
+    @Test void rejectsNullBlankAndScalarRequestJsonAtValidationBoundary() {
+        assertAll(
+                () -> assertThrows(SqlServerTriageRepository.PersistenceException.class,
+                        () -> repository.registerRequest(enquiry(), null, "null")),
+                () -> assertThrows(SqlServerTriageRepository.PersistenceException.class,
+                        () -> repository.registerRequest(enquiry(), "   ", "blank")),
+                () -> assertThrows(SqlServerTriageRepository.PersistenceException.class,
+                        () -> repository.registerRequest(enquiry(), "42", "scalar")));
+        verifyNoInteractions(dataSource);
+    }
+
+    @Test void requestDatabaseFailureCanBeRetriedWithoutChangingOriginalPayload() throws Exception {
+        var registration = mock(PreparedStatement.class);
+        when(connection.prepareStatement(SqlServerTriageRepository.REGISTER)).thenReturn(registration);
+        when(registration.executeUpdate()).thenThrow(new SQLException("database unavailable")).thenReturn(1);
+        var raw = " {\"attempt\":1} ";
+
+        assertThrows(SqlServerTriageRepository.PersistenceException.class,
+                () -> repository.registerRequest(enquiry(), raw, "first"));
+        repository.registerRequest(enquiry(), raw, "retry");
+
+        verify(registration, times(2)).executeUpdate();
+        verify(registration, times(2)).setString(4, raw);
+    }
+
     @Test void successUpdatesTrackerAndAppendsMappedHistoryInOneTransaction() throws Exception {
         var raw = " {\"id\":\"gen-1\",\"extra\":true} ";
         var timings = mapper.readTree("{\"elapsedMs\":12}");
@@ -72,6 +97,10 @@ class SqlServerTriageRepositoryTest {
         verify(history).setString(3, "gen-1");
         verify(history).setString(4, "{\"elapsedMs\":12}");
         verify(history).setString(5, raw);
+        var order = inOrder(history, tracker, connection);
+        order.verify(history).executeUpdate();
+        order.verify(tracker).executeUpdate();
+        order.verify(connection).commit();
         verify(connection).commit();
         verify(connection, never()).rollback();
         assertFalse(SqlServerTriageRepository.INSERT_HISTORY.toLowerCase().contains("historyid"));
@@ -85,6 +114,42 @@ class SqlServerTriageRepositoryTest {
         verify(connection, times(2)).commit();
     }
 
+    @Test void successfulResponseSupportsNullOptionalMetadataBoundary() throws Exception {
+        var result = new AiClassification(new TriageResult("ok", enquiry()), null, null, null, null);
+
+        repository.updateSuccess("ref-1", result, "corr");
+
+        verify(history).setNull(2, java.sql.Types.INTEGER);
+        verify(history).setString(3, null);
+        verify(history).setString(4, null);
+        verify(history).setString(5, null);
+        verify(tracker).setString(1, "SUCCESS");
+        verify(connection).commit();
+    }
+
+    @Test void successfulResponseAcceptsProviderIdAtMaximumBoundary() throws Exception {
+        var maximumId = "g".repeat(SqlServerTriageRepository.MAX_GEN_AI_ID_LENGTH);
+        var result = new AiClassification(new TriageResult("ok", enquiry()), maximumId, 0,
+                mapper.createObjectNode(), "{\"ok\":true}");
+
+        repository.updateSuccess("ref-1", result, "corr");
+
+        verify(history).setString(3, maximumId);
+        verify(history).setInt(2, 0);
+        verify(history).setString(4, "{}");
+        verify(connection).commit();
+    }
+
+    @Test void oversizedProviderIdFailsBeforeAnyDatabaseWrite() {
+        var result = new AiClassification(new TriageResult("ok", enquiry()),
+                "g".repeat(SqlServerTriageRepository.MAX_GEN_AI_ID_LENGTH + 1), 1, null, "{\"ok\":true}");
+
+        assertThrows(SqlServerTriageRepository.PersistenceException.class,
+                () -> repository.updateSuccess("ref-1", result, "corr"));
+
+        verifyNoInteractions(dataSource);
+    }
+
     @Test void failureTruncatesMessageUpdatesStatusAndAppendsHistory() throws Exception {
         repository.updateFailure("ref-1", "x".repeat(200), "{\"error\":\"provider\"}", "corr");
         verify(tracker).setString(1, "FAILURE");
@@ -94,22 +159,75 @@ class SqlServerTriageRepositoryTest {
         verify(connection).commit();
     }
 
-    @Test void historyFailureRollsBackTrackerStatusUpdate() throws Exception {
+    @Test void failureAtExactErrorBoundaryIsStoredWithoutModification() throws Exception {
+        var error = "e".repeat(SqlServerTriageRepository.MAX_ERROR_LENGTH);
+
+        repository.updateFailure("ref-1", error, "not-json", "corr");
+
+        verify(tracker).setString(2, error);
+        verify(history).setString(5, null);
+        verify(connection).commit();
+    }
+
+    @Test void nullFailureDetailsStillRecordFailureAttempt() throws Exception {
+        repository.updateFailure("ref-1", null, null, "corr");
+
+        verify(tracker).setString(1, "FAILURE");
+        verify(tracker).setString(2, null);
+        verify(history).setNull(2, java.sql.Types.INTEGER);
+        verify(history).executeUpdate();
+        verify(connection).commit();
+    }
+
+    @Test void historyFailureRollsBackWithoutUpdatingTracker() throws Exception {
         when(history.executeUpdate()).thenThrow(new SQLException("history unavailable"));
         var result = new AiClassification(new TriageResult("ok", enquiry()), null, 1, null, "{\"ok\":true}");
         assertThrows(SqlServerTriageRepository.PersistenceException.class,
                 () -> repository.updateSuccess("ref-1", result, "corr"));
-        verify(tracker).executeUpdate();
+        verify(tracker, never()).executeUpdate();
         verify(connection).rollback();
         verify(connection, never()).commit();
     }
 
-    @Test void missingTrackerRollsBackWithoutHistoryInsert() throws Exception {
+    @Test void responseRecordingRetrySucceedsAfterTransientHistoryFailure() throws Exception {
+        when(history.executeUpdate()).thenThrow(new SQLException("temporary failure")).thenReturn(1);
+        var result = new AiClassification(new TriageResult("ok", enquiry()), "gen-1", 5,
+                null, "{\"ok\":true}");
+
+        assertThrows(SqlServerTriageRepository.PersistenceException.class,
+                () -> repository.updateSuccess("ref-1", result, "first"));
+        repository.updateSuccess("ref-1", result, "retry");
+
+        verify(history, times(2)).executeUpdate();
+        verify(tracker, times(1)).executeUpdate();
+        verify(connection, times(1)).rollback();
+        verify(connection, times(1)).commit();
+    }
+
+    @Test void failureRecordingRetryRollsBackFirstHistoryAndCommitsOnlyRetry() throws Exception {
+        when(tracker.executeUpdate()).thenReturn(0, 1);
+
+        assertThrows(SqlServerTriageRepository.PersistenceException.class,
+                () -> repository.updateFailure("ref-1", "failed", "{\"attempt\":1}", "first"));
+        repository.updateFailure("ref-1", "failed", "{\"attempt\":2}", "retry");
+
+        verify(history, times(2)).executeUpdate();
+        verify(tracker, times(2)).executeUpdate();
+        verify(connection, times(1)).rollback();
+        verify(connection, times(1)).commit();
+    }
+
+    @Test void missingTrackerRollsBackPreviouslyInsertedHistory() throws Exception {
         when(tracker.executeUpdate()).thenReturn(0);
         assertThrows(SqlServerTriageRepository.PersistenceException.class,
                 () -> repository.updateFailure("missing", "error", null, "corr"));
+        verify(history).executeUpdate();
+        var order = inOrder(history, tracker, connection);
+        order.verify(history).executeUpdate();
+        order.verify(tracker).executeUpdate();
+        order.verify(connection).rollback();
         verify(connection).rollback();
-        verify(history, never()).executeUpdate();
+        verify(connection, never()).commit();
     }
 
     @Test void jsonUtilityPreservesValidPayloadAndDropsInvalidOrScalarValues() {
