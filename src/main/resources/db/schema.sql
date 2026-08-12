@@ -10,7 +10,7 @@ CREATE TABLE customer_enquiry_triage_tracker
     lastErrorMssg     NVARCHAR(128) NULL,
     processingCount   INT           NOT NULL DEFAULT 0,
     totalTokens       INT           NULL,
-    genAiId           NVARCHAR(35)  NULL,
+    genAiId           NVARCHAR(56)  NULL,
     timingJson        NVARCHAR(MAX) NULL,
     aiResponseJson    NVARCHAR(MAX) NULL,
     recCreatedAt      DATETIME2(3)  NOT NULL DEFAULT SYSUTCDATETIME(),

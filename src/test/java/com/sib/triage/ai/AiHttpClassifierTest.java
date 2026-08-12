@@ -13,6 +13,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+/**
+ * Verifies the AI HTTP client parses standard provider responses and preserves audit metadata.
+ */
 @ExtendWith(ConsoleTestDescription.class)
 class AiHttpClassifierTest {
     private final CustomerEnquiry enquiry = new CustomerEnquiry(

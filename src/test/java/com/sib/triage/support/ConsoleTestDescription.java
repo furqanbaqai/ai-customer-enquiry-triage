@@ -5,9 +5,10 @@ import org.junit.jupiter.api.extension.BeforeTestExecutionCallback;
 import org.junit.jupiter.api.extension.ExtensionContext;
 
 /**
- * Prints a concise, human-readable scenario and result for every unit test.
- * This deliberately uses stdout so descriptions remain visible in local Maven
- * builds and CI logs without requiring a particular logging configuration.
+ * Prints concise scenario descriptions to the console before and after each JUnit test.
+ *
+ * <p>The extension keeps test output readable in local Maven runs and CI logs without requiring
+ * a custom logger setup or additional reporting dependencies.</p>
  */
 public final class ConsoleTestDescription implements BeforeTestExecutionCallback, AfterTestExecutionCallback {
     private static final ExtensionContext.Namespace NAMESPACE =

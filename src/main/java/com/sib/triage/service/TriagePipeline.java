@@ -12,6 +12,14 @@ import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import java.util.concurrent.*;
 
+/**
+ * Orchestrates the end-to-end customer-enquiry triage workflow.
+ *
+ * <p>The pipeline validates inbound JSON, persists the initial tracking state, invokes the AI
+ * classifier, updates the tracker with the outcome, and publishes the final response to the
+ * configured IBM MQ result queue. All stages keep the correlation ID attached so operational
+ * logs can trace the same enquiry through multiple subsystems.</p>
+ */
 public final class TriagePipeline {
     private static final Logger LOGGER = LoggerFactory.getLogger(TriagePipeline.class);
     private final ObjectMapper mapper;
@@ -21,6 +29,17 @@ public final class TriagePipeline {
     private final TriageResultPublisher resultPublisher;
     private final Executor executor;
 
+    /**
+     * Creates a pipeline bound to the JSON mapper, schema validator, AI classifier, tracking repository,
+     * result publisher, and executor used for asynchronous processing.
+     *
+     * @param mapper JSON serializer/deserializer used for inbound request conversion
+     * @param schemaValidator ensures the payload matches the expected request contract
+     * @param classifier AI classification service that decides triage outcome
+     * @param repository persistence layer that records the request lifecycle
+     * @param resultPublisher downstream MQ writer for final classification output
+     * @param executor executor used to offload blocking work from the JMS listener thread
+     */
     public TriagePipeline(ObjectMapper mapper, EnquirySchemaValidator schemaValidator,
             TriageClassifier classifier, TriageRepository repository,
             TriageResultPublisher resultPublisher, Executor executor) {
@@ -35,18 +54,15 @@ public final class TriagePipeline {
     /**
      * Processes a customer enquiry through the triage pipeline asynchronously.
      *
-     * The method performs the following steps:
-     * 1. Parses the JSON payload into a CustomerEnquiry object
-     * 2. Classifies the enquiry using the TriageClassifier with correlation tracking
-     * 3. Publishes the AI response to the configured result queue
-     * 4. Logs completion or error status with correlation context
+     * <p>The method validates the JSON contract, converts the payload to the domain model,
+     * registers the request in the tracking table, invokes the AI classifier, persists the final
+     * state, and publishes the result to the configured response queue. The correlation ID is kept
+     * in thread-local MDC throughout each stage so operational logs remain traceable.</p>
      *
-     * All operations maintain correlation context for distributed tracing.
-     *
-     * @param json the JSON string representing the customer enquiry payload
-     * @param correlationId the unique identifier for tracking this enquiry through the system
-     * @return a CompletionStage that completes when the entire pipeline processing is done,
-     *         or fails with InvalidEnquiryException if the JSON cannot be parsed
+     * @param json raw customer-enquiry payload received from IBM MQ
+     * @param correlationId unique identifier used to correlate messages, database entries, and logs
+     * @return a future representing the pipeline lifecycle; failures are propagated as
+     *         {@link InvalidEnquiryException} or repository/AI exceptions according to the stage that fails
      */
     public CompletionStage<Void> process(String json, String correlationId) {
         try {
@@ -92,18 +108,33 @@ public final class TriagePipeline {
         }
     }
 
+    /**
+     * Unwraps completion exceptions so the underlying service error is reported consistently.
+     *
+     * @param error exception or completion wrapper
+     * @return the underlying cause if nested completion wrappers are present
+     */
     private static Throwable unwrap(Throwable error) {
         while ((error instanceof CompletionException || error instanceof ExecutionException)
                 && error.getCause() != null) error = error.getCause();
         return error;
     }
 
+    /**
+     * Executes a processing block with the current correlation ID attached to MDC.
+     *
+     * @param correlationId record identifier used for tracing across async boundaries
+     * @param action work to run with the correlation ID bound to logging context
+     */
     private static void withCorrelation(String correlationId, Runnable action) {
         try (var ignored = MDC.putCloseable("correlationId", correlationId)) {
             action.run();
         }
     }
 
+    /**
+     * Indicates that an inbound payload could not be parsed or validated as a customer enquiry.
+     */
     public static final class InvalidEnquiryException extends RuntimeException {
         public InvalidEnquiryException(String message, Throwable cause) {
             super(message, cause);

@@ -11,12 +11,24 @@ import jakarta.jms.JMSException;
 import jakarta.jms.JMSProducer;
 import jakarta.jms.Queue;
 
+/**
+ * Publishes completed triage outcomes to the IBM MQ result queue.
+ *
+ * <p>The publisher serializes the domain result model to JSON, attaches the correlation ID to the
+ * JMS message, and sends it to the configured downstream queue for routing to the next system.
+ */
 public final class MqTriageResultPublisher implements TriageResultPublisher, AutoCloseable {
     private final JMSContext context;
     private final JMSProducer producer;
     private final Queue resultQueue;
     private final ObjectMapper mapper;
 
+    /**
+     * Opens a JMS context for the result queue and prepares a producer for outbound messages.
+     *
+     * @param config MQ connection and queue metadata
+     * @param mapper JSON mapper used to serialize the triage result payload
+     */
     public MqTriageResultPublisher(AppConfig.Mq config, ObjectMapper mapper) {
         this.mapper = mapper;
         try {
@@ -31,11 +43,25 @@ public final class MqTriageResultPublisher implements TriageResultPublisher, Aut
         }
     }
 
+    /**
+     * Publishes a final triage result onto the result queue with the same correlation ID used for
+     * the originating enquiry.
+     *
+     * @param result completed triage outcome to emit downstream
+     * @param correlationId message correlation identifier for tracing
+     */
     @Override
     public synchronized void publish(TriageResult result, String correlationId) {
         producer.setJMSCorrelationID(correlationId).send(resultQueue, serialize(mapper, result));
     }
 
+    /**
+     * Serializes the domain model to the JSON contract expected by the downstream system.
+     *
+     * @param mapper Jackson mapper used for serialization
+     * @param result triage result to serialize
+     * @return JSON payload for the result queue
+     */
     static String serialize(ObjectMapper mapper, TriageResult result) {
         try {
             return mapper.writeValueAsString(result);

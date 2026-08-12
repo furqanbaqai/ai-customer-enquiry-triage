@@ -47,7 +47,7 @@ CREATE TABLE customer_enquiry_triage_tracker
     processingCount   INT           NOT NULL DEFAULT 0,
 
     totalTokens       INT           NULL,
-    genAiId           NVARCHAR(35)  NULL,
+    genAiId           NVARCHAR(56)  NULL,
 
     timingJson        NVARCHAR(MAX) NULL,
     aiResponseJson    NVARCHAR(MAX) NULL,
@@ -263,7 +263,7 @@ If the AI response does not contain an ID, persist `NULL`.
 Respect the database maximum:
 
 ```text
-NVARCHAR(35)
+NVARCHAR(56)
 ```
 
 Do not silently persist an invalid oversized value.

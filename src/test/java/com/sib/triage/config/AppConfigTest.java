@@ -9,6 +9,9 @@ import java.nio.file.Path;
 import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
 
+/**
+ * Verifies that configuration resolution honors environment overrides and default queue values.
+ */
 @ExtendWith(ConsoleTestDescription.class)
 class AppConfigTest {
     @TempDir Path directory;

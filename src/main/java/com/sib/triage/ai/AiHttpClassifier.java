@@ -19,6 +19,15 @@ import java.util.concurrent.CompletionStage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+/**
+ * Invokes the external AI classification service using an HTTP payload built from the loaded
+ * prompt template and the incoming customer message.
+ *
+ * <p>The classifier reads the prompt resource once during class initialization, injects the
+ * customer message at the configured placeholder, and sends a JSON payload that matches the
+ * expected inference contract. The response is parsed into the application's domain model while
+ * preserving the raw provider payload for auditability.</p>
+ */
 public final class AiHttpClassifier implements TriageClassifier {
     private static final Logger LOGGER = LoggerFactory.getLogger(AiHttpClassifier.class);
     private static final String PROMPT_CLASSPATH = "com/sib/triage/ai/prompts/TriagePipelinePromptv1";
@@ -52,22 +61,51 @@ public final class AiHttpClassifier implements TriageClassifier {
     private final ObjectMapper mapper;
     private final AppConfig.HttpEndpoint endpoint;
 
+    /**
+     * Creates the AI client bound to a configured HTTP endpoint and JSON mapper.
+     *
+     * @param client shared HTTP client used for inference calls
+     * @param mapper Jackson mapper used to convert request and response bodies
+     * @param endpoint AI endpoint metadata including URL, API key, and timeout
+     */
     public AiHttpClassifier(HttpClient client, ObjectMapper mapper, AppConfig.HttpEndpoint endpoint) {
         this.client = client;
         this.mapper = mapper;
         this.endpoint = endpoint;
     }
 
+    /**
+     * Invokes the AI service and extracts only the triage result payload.
+     *
+     * @param enquiry customer enquiry being classified
+     * @param correlationId operational identifier attached to the outbound request header
+     * @return a future containing the triage result content of the AI response
+     */
     @Override
     public CompletionStage<TriageResult> classify(CustomerEnquiry enquiry, String correlationId) {
         return invoke(enquiry, correlationId).thenApply(AiClassification::result);
     }
 
+    /**
+     * Invokes the AI service and preserves the full provider response for audit storage.
+     *
+     * @param enquiry customer enquiry being classified
+     * @param correlationId operational identifier attached to the outbound request header
+     * @return a future containing the parsed AI response metadata and payload
+     */
     @Override
     public CompletionStage<AiClassification> classifyDetailed(CustomerEnquiry enquiry, String correlationId) {
         return invoke(enquiry, correlationId);
     }
 
+    /**
+     * Builds the HTTP request payload, submits it to the configured AI endpoint, and parses the
+     * provider response into the application's compact classification model.
+     *
+     * @param enquiry customer message being classified
+     * @param correlationId tracer value used in the request header and log correlation
+     * @return the parsed classification result along with provider metadata
+     */
     private CompletionStage<AiClassification> invoke(CustomerEnquiry enquiry, String correlationId) {
         try {
             // Replace placeholder in prompt with incoming message content
@@ -109,6 +147,14 @@ public final class AiHttpClassifier implements TriageClassifier {
         }
     }
 
+    /**
+     * Extracts the provider's response content and the metadata fields needed for database auditing.
+     *
+     * @param responseBody raw provider response body
+     * @param customerEnquiry customer invitation linked to the AI result
+     * @return parsed AI response enriched with provider metadata and the original payload
+     * @throws IOException when the response cannot be understood or the content field is missing
+     */
     AiClassification parseResponse(String responseBody, CustomerEnquiry customerEnquiry) throws IOException {
         var response = mapper.readTree(responseBody);
         var choices = response.path("choices");
@@ -131,6 +177,13 @@ public final class AiHttpClassifier implements TriageClassifier {
                 timings.isMissingNode() || timings.isNull() ? null : timings, responseBody);
     }
 
+    /**
+     * Validates whether the provider returned a JSON container; if the body is not structured JSON,
+     * the raw payload is not persisted to the SQL Server JSON column.
+     *
+     * @param body raw HTTP response body
+     * @return the original payload when it is a valid JSON object/array, otherwise null
+     */
     private String validJsonOrNull(String body) {
         if (body == null || body.isBlank()) return null;
         try {
@@ -140,6 +193,9 @@ public final class AiHttpClassifier implements TriageClassifier {
         catch (IOException ignored) { return null; }
     }
 
+    /**
+     * Wraps failure conditions originating from the AI provider or request construction.
+     */
     public static final class AiServiceException extends RuntimeException {
         private final String rawJsonResponse;
         public AiServiceException(String message) {

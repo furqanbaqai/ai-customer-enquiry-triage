@@ -18,10 +18,23 @@ import java.net.http.HttpClient;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 
+/**
+ * Bootstraps the customer-enquiry triage service.
+ *
+ * <p>The application wires together the IBM MQ listener, SQL Server persistence layer,
+ * AI classification client, and downstream result publisher, then blocks indefinitely so
+ * the JVM remains available for inbound message processing.</p>
+ */
 public final class TriageApplication {
     private static final Logger LOGGER = LoggerFactory.getLogger(TriageApplication.class);
     private TriageApplication() {}
 
+    /**
+     * Starts the triage service and keeps the process alive for message-driven processing.
+     *
+     * @param args command-line arguments; the application does not currently use them
+     * @throws InterruptedException if the main thread is interrupted while waiting for shutdown
+     */
     public static void main(String[] args) throws InterruptedException {
         displayStartupBanner();
         var config = AppConfig.load();
@@ -49,6 +62,10 @@ public final class TriageApplication {
         new CountDownLatch(1).await();
     }
 
+    /**
+     * Prints the service banner to the console so startup diagnostics are visible in local
+     * and CI environments without relying on a configured logging backend.
+     */
     private static void displayStartupBanner() {
         System.out.print("""
                 ----------------------------------------------------------------
@@ -57,6 +74,12 @@ public final class TriageApplication {
                 """);
     }
 
+    /**
+     * Creates the SQL Server connection pool used by the repository layer.
+     *
+     * @param config database connection configuration resolved from environment or local properties
+     * @return a configured HikariCP data source for contact with the tracking database
+     */
     private static HikariDataSource dataSource(AppConfig.Database config) {
         var hikari = new HikariConfig();
         hikari.setJdbcUrl(config.url());

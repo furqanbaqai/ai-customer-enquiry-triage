@@ -8,6 +8,9 @@ import java.time.Instant;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+/**
+ * Verifies the invariants of the triage result model used by the AI response and downstream queue.
+ */
 @ExtendWith(ConsoleTestDescription.class)
 class TriageResultTest {
     private final CustomerEnquiry enquiry = new CustomerEnquiry(

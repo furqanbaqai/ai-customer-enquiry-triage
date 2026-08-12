@@ -12,6 +12,10 @@ import java.time.Instant;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+/**
+ * Verifies that final triage results are serialized to the expected JSON contract before they are
+ * published to the IBM MQ result queue.
+ */
 @ExtendWith(ConsoleTestDescription.class)
 class MqTriageResultPublisherTest {
     @Test void serializesContentAndCustomerEnquiryForResultQueue() throws Exception {

@@ -15,6 +15,10 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.jupiter.api.Assertions.*;
 
+/**
+ * Verifies the orchestration logic that validates, tracks, classifies, and publishes customer
+ * enquiries across the triage pipeline.
+ */
 @ExtendWith(ConsoleTestDescription.class)
 class TriagePipelineTest {
     @Test void publishesAiResponseWithCorrelationId() {
